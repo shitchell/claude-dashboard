@@ -23,8 +23,8 @@ func TestViewNotReady(t *testing.T) {
 
 	view := m.View()
 
-	if view != "Loading..." {
-		t.Errorf("expected 'Loading...', got %q", view)
+	if !strings.Contains(view, LoadingMessage) {
+		t.Errorf("expected loading message, got %q", view)
 	}
 }
 
@@ -296,6 +296,7 @@ func TestViewHelp(t *testing.T) {
 func TestViewFullOutput(t *testing.T) {
 	m := NewModel(ModelConfig{})
 	m.ready = true
+	m.loading = false
 	m.windowWidth = 80
 	m.windowHeight = 24
 	m.sessions = []*session.Session{
@@ -318,9 +319,13 @@ func TestViewFullOutput(t *testing.T) {
 func TestViewHelpMode(t *testing.T) {
 	m := NewModel(ModelConfig{})
 	m.ready = true
+	m.loading = false
 	m.showHelp = true
 	m.windowWidth = 80
 	m.windowHeight = 24
+	// Need at least one session to get past empty state check
+	m.sessions = []*session.Session{{ID: "1"}}
+	m.filteredSessions = m.sessions
 
 	view := m.View()
 
@@ -333,10 +338,13 @@ func TestViewHelpMode(t *testing.T) {
 func TestViewSearchMode(t *testing.T) {
 	m := NewModel(ModelConfig{})
 	m.ready = true
+	m.loading = false
 	m.viewMode = ViewModeSearch
 	m.windowWidth = 80
 	m.windowHeight = 24
-	m.filteredSessions = []*session.Session{{ID: "1"}}
+	// Need at least one session to get past empty state check
+	m.sessions = []*session.Session{{ID: "1"}}
+	m.filteredSessions = m.sessions
 
 	view := m.View()
 
@@ -395,4 +403,146 @@ func TestSortFieldName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// State Rendering Tests
+// =============================================================================
+
+// TestRenderLoading verifies initial loading state.
+func TestRenderLoading(t *testing.T) {
+	m := NewModel(ModelConfig{})
+
+	view := m.renderLoading()
+
+	if !strings.Contains(view, LoadingSpinner) {
+		t.Error("expected loading spinner in view")
+	}
+	if !strings.Contains(view, LoadingMessage) {
+		t.Error("expected loading message in view")
+	}
+}
+
+// TestRenderLoadingContent verifies loading state content.
+func TestRenderLoadingContent(t *testing.T) {
+	m := NewModel(ModelConfig{})
+	m.ready = true
+	m.windowWidth = 80
+	m.windowHeight = 24
+
+	content := m.renderLoadingContent()
+
+	if !strings.Contains(content, "Scanning") {
+		t.Error("expected scanning message in loading content")
+	}
+	if !strings.Contains(content, "sessions") {
+		t.Error("expected sessions message in loading content")
+	}
+}
+
+// TestRenderErrorContent verifies error state content.
+func TestRenderErrorContent(t *testing.T) {
+	m := NewModel(ModelConfig{})
+	m.ready = true
+	m.windowWidth = 80
+	m.windowHeight = 24
+	m.lastError = testErr{"test error from test"}
+
+	content := m.renderErrorContent()
+
+	if !strings.Contains(content, "Error") {
+		t.Error("expected Error title in content")
+	}
+	if !strings.Contains(content, "test error from test") {
+		t.Error("expected error message in content")
+	}
+	if !strings.Contains(content, "solutions") {
+		t.Error("expected solutions hint in content")
+	}
+	if !strings.Contains(content, "Escape") {
+		t.Error("expected escape hint in content")
+	}
+}
+
+// TestRenderEmptyContent verifies empty state content.
+func TestRenderEmptyContent(t *testing.T) {
+	m := NewModel(ModelConfig{})
+	m.ready = true
+	m.windowWidth = 80
+	m.windowHeight = 24
+
+	content := m.renderEmptyContent()
+
+	if !strings.Contains(content, "No Sessions Found") {
+		t.Error("expected 'No Sessions Found' title")
+	}
+	if !strings.Contains(content, "claude") {
+		t.Error("expected getting started hint with 'claude' command")
+	}
+	if !strings.Contains(content, "refresh") {
+		t.Error("expected refresh hint in content")
+	}
+}
+
+// TestViewStateHierarchy verifies the view state selection logic.
+func TestViewStateHierarchy(t *testing.T) {
+	t.Run("loading state shown when loading", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+		m.loading = true
+		m.windowWidth = 80
+		m.windowHeight = 24
+
+		view := m.View()
+
+		if !strings.Contains(view, "Scanning") {
+			t.Error("expected loading state to be shown")
+		}
+	})
+
+	t.Run("error state shown when error present", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+		m.loading = false
+		m.lastError = testErr{"some error"}
+		m.windowWidth = 80
+		m.windowHeight = 24
+
+		view := m.View()
+
+		if !strings.Contains(view, "Error") {
+			t.Error("expected error state to be shown")
+		}
+	})
+
+	t.Run("empty state shown when no sessions", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+		m.loading = false
+		m.sessions = nil
+		m.windowWidth = 80
+		m.windowHeight = 24
+
+		view := m.View()
+
+		if !strings.Contains(view, "No Sessions Found") {
+			t.Error("expected empty state to be shown")
+		}
+	})
+
+	t.Run("normal view shown with sessions", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+		m.loading = false
+		m.sessions = []*session.Session{{ID: "1", ProjectName: "test-project"}}
+		m.filteredSessions = m.sessions
+		m.windowWidth = 80
+		m.windowHeight = 24
+
+		view := m.View()
+
+		if !strings.Contains(view, "test-project") {
+			t.Error("expected normal view with sessions to be shown")
+		}
+	})
 }

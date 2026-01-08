@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/util"
 )
 
@@ -151,7 +152,8 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 		// Parse the line to detect type
 		var generic GenericLine
 		if err := json.Unmarshal(line, &generic); err != nil {
-			// Skip malformed lines but continue parsing
+			// Log and skip malformed lines but continue parsing
+			logging.Debug("Skipping malformed JSON line in %s at line %d: %v", path, messageCount, err)
 			continue
 		}
 
@@ -238,7 +240,13 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	// We need at least a CWD to consider this a valid session
 	// (Model might be empty for sessions that haven't had an assistant response yet)
 	if metadata.CWD == "" {
+		logging.Debug("Session file missing CWD, skipping: %s", path)
 		return nil, ErrNoInitMessage
+	}
+
+	// Log if model is missing (not an error, just informational)
+	if metadata.Model == "" {
+		logging.Debug("Session file has no model set (possibly new session): %s", path)
 	}
 
 	metadata.MessageCount = messageCount
@@ -291,6 +299,7 @@ func (p *Parser) ParseLastEntry(path string) (*LastEntry, error) {
 	// Parse the last line
 	var generic GenericLine
 	if err := json.Unmarshal(lastLine, &generic); err != nil {
+		logging.Debug("Malformed JSON in last line of %s: %v", path, err)
 		return nil, ErrMalformedJSON
 	}
 

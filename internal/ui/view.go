@@ -21,10 +21,31 @@ const (
 
 // View renders the model to a string for display.
 // This is called after every Update to refresh the screen.
+// The view function implements the state hierarchy:
+//   1. If not ready (no window size), show initial loading
+//   2. If loading (sessions not yet loaded), show loading state
+//   3. If error occurred, show error state
+//   4. If no sessions, show empty state
+//   5. Otherwise, show normal session list
 func (m Model) View() string {
 	// If not ready (no window size yet), show loading message
 	if !m.ready {
-		return "Loading..."
+		return m.renderLoading()
+	}
+
+	// If loading sessions (initial load), show loading state
+	if m.loading {
+		return m.renderFullView(m.renderLoadingContent())
+	}
+
+	// If there's an error, show error state
+	if m.lastError != nil {
+		return m.renderFullView(m.renderErrorContent())
+	}
+
+	// If no sessions found, show empty state
+	if len(m.sessions) == 0 {
+		return m.renderFullView(m.renderEmptyContent())
 	}
 
 	// Build the view based on current mode
@@ -411,4 +432,127 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// =============================================================================
+// State Rendering Functions
+// =============================================================================
+
+// Loading state constants for consistent appearance.
+const (
+	// LoadingSpinner is the character shown during loading.
+	LoadingSpinner = "*"
+
+	// LoadingMessage is the text shown during initial loading.
+	LoadingMessage = "Loading sessions..."
+)
+
+// renderLoading renders the initial loading state before window size is known.
+// This is shown briefly at startup before the first window size message.
+func (m Model) renderLoading() string {
+	return fmt.Sprintf("\n  %s %s\n", LoadingSpinner, LoadingMessage)
+}
+
+// renderLoadingContent renders the loading state content for the main view.
+// This is shown while sessions are being loaded from disk.
+func (m Model) renderLoadingContent() string {
+	styles := m.getStyles()
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, "")
+
+	// Center the loading message based on available height
+	padding := m.contentHeight() / 3
+	for i := 0; i < padding; i++ {
+		lines = append(lines, "")
+	}
+
+	// Loading indicator with spinner
+	loadingLine := fmt.Sprintf("  %s %s", LoadingSpinner, LoadingMessage)
+	lines = append(lines, styles.Dim.Render(loadingLine))
+	lines = append(lines, "")
+	lines = append(lines, styles.Dim.Render("  Scanning for Claude Code sessions..."))
+
+	return strings.Join(lines, "\n")
+}
+
+// renderErrorContent renders the error state content for the main view.
+// This is shown when a fatal error occurs during session loading.
+func (m Model) renderErrorContent() string {
+	styles := m.getStyles()
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, "")
+
+	// Center the error message
+	padding := m.contentHeight() / 4
+	for i := 0; i < padding; i++ {
+		lines = append(lines, "")
+	}
+
+	// Error icon and title
+	lines = append(lines, styles.Error.Render("  Error Loading Sessions"))
+	lines = append(lines, "")
+
+	// Error message
+	if m.lastError != nil {
+		errMsg := m.lastError.Error()
+		// Wrap long error messages
+		if len(errMsg) > m.windowWidth-6 && m.windowWidth > 20 {
+			errMsg = errMsg[:m.windowWidth-9] + "..."
+		}
+		lines = append(lines, styles.Dim.Render(fmt.Sprintf("  %s", errMsg)))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "")
+
+	// Recovery hints
+	lines = append(lines, styles.Dim.Render("  Possible solutions:"))
+	lines = append(lines, styles.Dim.Render("    - Check that ~/.claude/projects exists"))
+	lines = append(lines, styles.Dim.Render("    - Verify file permissions"))
+	lines = append(lines, styles.Dim.Render("    - Press 'r' to retry loading"))
+	lines = append(lines, styles.Dim.Render("    - Press 'q' to quit"))
+	lines = append(lines, "")
+	lines = append(lines, styles.Help.Render("  Press Escape to dismiss this error"))
+
+	return strings.Join(lines, "\n")
+}
+
+// renderEmptyContent renders the empty state content for the main view.
+// This is shown when no sessions are found in the projects directory.
+func (m Model) renderEmptyContent() string {
+	styles := m.getStyles()
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, "")
+
+	// Center the message
+	padding := m.contentHeight() / 4
+	for i := 0; i < padding; i++ {
+		lines = append(lines, "")
+	}
+
+	// Empty state icon and title
+	lines = append(lines, styles.Title.Render("  No Sessions Found"))
+	lines = append(lines, "")
+
+	// Explanation
+	lines = append(lines, styles.Dim.Render("  No Claude Code sessions were found in the projects directory."))
+	lines = append(lines, "")
+
+	// Getting started hints
+	lines = append(lines, styles.Dim.Render("  To get started:"))
+	lines = append(lines, styles.Dim.Render("    1. Open a terminal in your project directory"))
+	lines = append(lines, styles.Dim.Render("    2. Run: claude"))
+	lines = append(lines, styles.Dim.Render("    3. Start a conversation with Claude"))
+	lines = append(lines, "")
+	lines = append(lines, styles.Dim.Render("  Sessions will appear here automatically."))
+	lines = append(lines, "")
+	lines = append(lines, styles.Help.Render("  Press 'r' to refresh | 'q' to quit"))
+
+	return strings.Join(lines, "\n")
 }

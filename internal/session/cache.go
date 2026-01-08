@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // CacheEntry represents a single cached session metadata entry.
@@ -80,15 +81,18 @@ func (c *Cache) Load() error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No cache file yet - this is normal on first run
+			logging.Debug("Cache file does not exist, starting fresh: %s", c.path)
 			return nil
 		}
-		return err
+		logging.Warn("Error reading cache file, starting fresh: %s: %v", c.path, err)
+		return nil // Start fresh on read error
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return err
+		logging.Warn("Error reading cache file contents, starting fresh: %s: %v", c.path, err)
+		return nil // Start fresh on read error
 	}
 
 	if len(data) == 0 {
@@ -99,11 +103,13 @@ func (c *Cache) Load() error {
 	var cacheFile CacheFile
 	if err := json.Unmarshal(data, &cacheFile); err != nil {
 		// Corrupted cache - reset to empty
+		logging.Warn("Cache file corrupted (invalid JSON), starting fresh: %s", c.path)
 		return nil
 	}
 
 	// Version mismatch - reset to empty (will rebuild)
 	if cacheFile.Version != c.version {
+		logging.Info("Cache version mismatch (got %d, expected %d), rebuilding cache", cacheFile.Version, c.version)
 		return nil
 	}
 
@@ -125,6 +131,7 @@ func (c *Cache) Save() error {
 	// Create the cache directory if it doesn't exist
 	dir := filepath.Dir(c.path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		logging.Warn("Failed to create cache directory: %s: %v", dir, err)
 		return err
 	}
 
@@ -142,6 +149,7 @@ func (c *Cache) Save() error {
 	tempPath := c.path + ".tmp"
 	tempFile, err := os.Create(tempPath)
 	if err != nil {
+		logging.Warn("Failed to create cache temp file: %s: %v", tempPath, err)
 		return err
 	}
 
@@ -152,16 +160,19 @@ func (c *Cache) Save() error {
 	if writeErr != nil {
 		// Clean up temp file on error
 		os.Remove(tempPath)
+		logging.Warn("Failed to write cache data: %v", writeErr)
 		return writeErr
 	}
 	if closeErr != nil {
 		os.Remove(tempPath)
+		logging.Warn("Failed to close cache temp file: %v", closeErr)
 		return closeErr
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempPath, c.path); err != nil {
 		os.Remove(tempPath)
+		logging.Warn("Failed to rename cache temp file: %v", err)
 		return err
 	}
 

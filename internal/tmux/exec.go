@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // ErrNotInTmux is returned when tmux commands are attempted
@@ -44,16 +46,22 @@ func (r *defaultRunner) Run(args ...string) ([]byte, error) {
 func runTmux(args ...string) ([]byte, error) {
 	// Check if we're running inside tmux
 	if os.Getenv("TMUX") == "" {
+		logging.Debug("tmux: not running inside tmux (TMUX env var not set)")
 		return nil, ErrNotInTmux
 	}
 
 	// Check if tmux is available
 	if _, err := exec.LookPath("tmux"); err != nil {
+		logging.Warn("tmux: executable not found in PATH")
 		return nil, ErrTmuxNotFound
 	}
 
 	runner := &defaultRunner{}
-	return runner.Run(args...)
+	output, err := runner.Run(args...)
+	if err != nil {
+		logging.Debug("tmux command failed: tmux %v: %v", args, err)
+	}
+	return output, err
 }
 
 // runTmuxWithRunner executes a tmux command using the provided runner.

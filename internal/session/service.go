@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // Service orchestrates session discovery, parsing, and caching.
@@ -84,6 +85,7 @@ func NewService(config *ServiceConfig) (*Service, error) {
 	if err := cache.Load(); err != nil {
 		// Non-fatal: we can continue without cache
 		// The cache will be empty and rebuilt
+		logging.Warn("Failed to load cache, starting fresh: %v", err)
 	}
 
 	return &Service{
@@ -116,20 +118,31 @@ func (s *Service) LoadAll() ([]*Session, error) {
 
 	// Process each scan result
 	sessions := make([]*Session, 0, len(scanResults))
+	skippedCount := 0
 	for _, result := range scanResults {
 		session, err := s.processResult(result)
 		if err != nil {
 			// Skip files that can't be parsed
 			// This could be due to empty files, malformed JSON, etc.
+			logging.Debug("Skipping session file: %s: %v", result.FilePath, err)
+			skippedCount++
 			continue
 		}
 		sessions = append(sessions, session)
 	}
 
+	if skippedCount > 0 {
+		logging.Info("Loaded %d sessions, skipped %d files", len(sessions), skippedCount)
+	} else {
+		logging.Debug("Loaded %d sessions", len(sessions))
+	}
+
 	// Save cache if there were changes
 	if s.cache.IsDirty() {
 		// Non-fatal if save fails
-		_ = s.cache.Save()
+		if err := s.cache.Save(); err != nil {
+			logging.Warn("Failed to save cache: %v", err)
+		}
 	}
 
 	// Sort by modification time (newest first) by default
@@ -200,6 +213,7 @@ func (s *Service) Refresh(existing []*Session) ([]*Session, error) {
 		session, err := s.processResult(result)
 		if err != nil {
 			// Skip files that can't be parsed
+			logging.Debug("Skipping session file during refresh: %s: %v", result.FilePath, err)
 			continue
 		}
 		sessions = append(sessions, session)
@@ -208,7 +222,9 @@ func (s *Service) Refresh(existing []*Session) ([]*Session, error) {
 	// Save cache if there were changes
 	if s.cache.IsDirty() {
 		// Non-fatal if save fails
-		_ = s.cache.Save()
+		if err := s.cache.Save(); err != nil {
+			logging.Warn("Failed to save cache during refresh: %v", err)
+		}
 	}
 
 	// Sort by modification time (newest first) by default

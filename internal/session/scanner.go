@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // DefaultProjectsDir returns the default path to Claude Code's projects directory.
@@ -82,6 +83,10 @@ func (s *Scanner) Scan() ([]ScanResult, error) {
 	// Read the projects directory
 	projectDirs, err := os.ReadDir(s.ProjectsDir)
 	if err != nil {
+		if os.IsPermission(err) {
+			logging.Warn("Permission denied reading projects directory: %s", s.ProjectsDir)
+			return results, nil // Return empty results instead of failing
+		}
 		return nil, err
 	}
 
@@ -96,7 +101,12 @@ func (s *Scanner) Scan() ([]ScanResult, error) {
 		// Read the project directory for JSONL files
 		files, err := os.ReadDir(projectPath)
 		if err != nil {
-			// Skip directories we can't read
+			// Log and skip directories we can't read
+			if os.IsPermission(err) {
+				logging.Warn("Permission denied reading project directory: %s", projectPath)
+			} else {
+				logging.Debug("Skipping project directory due to error: %s: %v", projectPath, err)
+			}
 			continue
 		}
 
@@ -115,6 +125,7 @@ func (s *Scanner) Scan() ([]ScanResult, error) {
 			// Get file info for modification time
 			fileInfo, err := file.Info()
 			if err != nil {
+				logging.Debug("Skipping file due to stat error: %s: %v", filePath, err)
 				continue
 			}
 

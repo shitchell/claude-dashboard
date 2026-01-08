@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // Navigation method constants define how the Navigator switches to panes.
@@ -115,8 +117,10 @@ func (n *Navigator) GoToPane(paneID string) error {
 		if strings.Contains(outputStr, "can't find") ||
 			strings.Contains(outputStr, "no such") ||
 			strings.Contains(outputStr, "not found") {
+			logging.Debug("tmux: pane not found: %s", paneID)
 			return ErrPaneNotFound
 		}
+		logging.Warn("tmux: navigation failed to pane %s: %v", paneID, err)
 		return ErrNavigationFailed
 	}
 
@@ -163,9 +167,11 @@ func (n *Navigator) ResumeInNewPane(sessionID, cwd string) error {
 	}
 
 	if err != nil {
+		logging.Warn("tmux: failed to resume session %s in new pane: %v", sessionID, err)
 		return err
 	}
 
+	logging.Info("tmux: resumed session %s in new pane", sessionID)
 	return nil
 }
 
