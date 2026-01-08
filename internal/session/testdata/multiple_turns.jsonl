@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","uuid":"init-uuid","timestamp":"2025-12-27T23:21:01.457Z","sessionId":"multi-turn-session","model":"claude-sonnet-4-20250514","claude_code_version":"2.0.76","cwd":"/home/user/myproject"}
+{"type":"user","uuid":"user1","parentUuid":null,"timestamp":"2025-12-27T23:21:01.457Z","sessionId":"multi-turn-session","message":{"role":"user","content":"First question"}}
+{"type":"assistant","uuid":"assist1","parentUuid":"user1","timestamp":"2025-12-27T23:21:07.039Z","sessionId":"multi-turn-session","message":{"id":"msg_1","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"First answer"}]}}
+{"type":"user","uuid":"user2","parentUuid":"assist1","timestamp":"2025-12-27T23:22:01.457Z","sessionId":"multi-turn-session","message":{"role":"user","content":"Second question"}}
+{"type":"assistant","uuid":"assist2","parentUuid":"user2","timestamp":"2025-12-27T23:22:07.039Z","sessionId":"multi-turn-session","message":{"id":"msg_2","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"Second answer"}]}}
+{"type":"user","uuid":"user3","parentUuid":"assist2","timestamp":"2025-12-27T23:23:01.457Z","sessionId":"multi-turn-session","message":{"role":"user","content":"Third question"}}
+{"type":"assistant","uuid":"assist3","parentUuid":"user3","timestamp":"2025-12-27T23:23:07.039Z","sessionId":"multi-turn-session","message":{"id":"msg_3","type":"message","model":"claude-sonnet-4-20250514","role":"assistant","content":[{"type":"text","text":"Third and final answer"}]}}
+{"type":"summary","summary":"Multi-turn conversation about three questions","leafUuid":"assist3"}
