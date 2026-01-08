@@ -1,0 +1,56 @@
+# claude-dashboard default configuration
+#
+# This file contains the default configuration values for claude-dashboard.
+# Copy this file to ~/.config/claude-dashboard/config.yaml to customize.
+
+# UI settings
+ui:
+  # Default view mode: "list" or "grid"
+  default_view: list
+
+  # Column widths for list view
+  columns:
+    name: 20
+    preview: 40
+    modified: 10
+
+  # Minimum side panel width for grid view
+  side_panel_min_width: 20
+
+# Session settings
+sessions:
+  # Path to Claude Code projects directory (relative to home)
+  projects_dir: .claude/projects
+
+  # Maximum characters for session name display
+  max_name_length: 40
+
+  # Maximum characters for preview text
+  max_preview_length: 80
+
+# Refresh settings
+refresh:
+  # Auto-refresh interval in seconds
+  interval: 5
+
+  # Enable/disable auto-refresh
+  enabled: true
+
+# Cache settings
+cache:
+  # Cache directory (relative to home)
+  dir: .cache/claude-dashboard
+
+  # Cache file name
+  filename: sessions.json
+
+  # Enable/disable caching
+  enabled: true
+
+# tmux integration settings
+tmux:
+  # Enable/disable tmux pane detection
+  enabled: true
+
+  # Highlight sessions that are running in tmux panes
+  highlight_running: true
