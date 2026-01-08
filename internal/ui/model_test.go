@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shitchell/claude-dashboard/internal/config"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
@@ -303,19 +304,75 @@ func TestLoadSessionsCmd(t *testing.T) {
 	})
 }
 
-// TestTickCmd verifies the tick command.
+// TestTickCmd verifies the tick command with various configurations.
 func TestTickCmd(t *testing.T) {
-	m := NewModel(ModelConfig{
-		RefreshInterval: 100 * time.Millisecond,
+	t.Run("returns command when enabled with valid interval", func(t *testing.T) {
+		m := NewModel(ModelConfig{
+			RefreshInterval: 100 * time.Millisecond,
+		})
+
+		cmd := m.tickCmd()
+		if cmd == nil {
+			t.Error("tickCmd() should return a non-nil command")
+		}
 	})
 
-	cmd := m.tickCmd()
-	if cmd == nil {
-		t.Error("tickCmd() should return a non-nil command")
-	}
+	t.Run("returns nil when interval is zero", func(t *testing.T) {
+		m := NewModel(ModelConfig{
+			RefreshInterval: 0,
+		})
+		// Manually set to zero since NewModel uses default
+		m.refreshInterval = 0
 
-	// The command returns a tea.tickMsg which we can't easily test,
-	// but we can verify it was created.
+		cmd := m.tickCmd()
+		if cmd != nil {
+			t.Error("tickCmd() should return nil when interval is zero")
+		}
+	})
+
+	t.Run("returns nil when auto-refresh disabled in config", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Refresh.Enabled = false
+		cfg.Refresh.Interval = 5 * time.Second
+
+		m := NewModel(ModelConfig{
+			Config:          cfg,
+			RefreshInterval: 5 * time.Second,
+		})
+
+		cmd := m.tickCmd()
+		if cmd != nil {
+			t.Error("tickCmd() should return nil when auto-refresh is disabled")
+		}
+	})
+
+	t.Run("returns command when auto-refresh enabled in config", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Refresh.Enabled = true
+		cfg.Refresh.Interval = 5 * time.Second
+
+		m := NewModel(ModelConfig{
+			Config:          cfg,
+			RefreshInterval: 5 * time.Second,
+		})
+
+		cmd := m.tickCmd()
+		if cmd == nil {
+			t.Error("tickCmd() should return a command when auto-refresh is enabled")
+		}
+	})
+
+	t.Run("returns command when config is nil (defaults to enabled)", func(t *testing.T) {
+		m := NewModel(ModelConfig{
+			Config:          nil,
+			RefreshInterval: 100 * time.Millisecond,
+		})
+
+		cmd := m.tickCmd()
+		if cmd == nil {
+			t.Error("tickCmd() should return a command when config is nil")
+		}
+	})
 }
 
 // TestPageSize verifies page size calculation.
@@ -368,6 +425,22 @@ func TestIsLoading(t *testing.T) {
 	m.loading = false
 	if m.IsLoading() {
 		t.Error("expected IsLoading()=false after setting loading=false")
+	}
+}
+
+// TestIsRefreshing verifies the refreshing state accessor.
+func TestIsRefreshing(t *testing.T) {
+	m := NewModel(ModelConfig{})
+
+	// Initially not refreshing
+	if m.IsRefreshing() {
+		t.Error("expected IsRefreshing()=false initially")
+	}
+
+	// After setting refreshing to true
+	m.refreshing = true
+	if !m.IsRefreshing() {
+		t.Error("expected IsRefreshing()=true after setting refreshing=true")
 	}
 }
 

@@ -114,15 +114,54 @@ func TestUpdateSessionsRefreshed(t *testing.T) {
 
 // TestUpdateRefreshTick verifies auto-refresh tick handling.
 func TestUpdateRefreshTick(t *testing.T) {
-	m := NewModel(ModelConfig{})
+	t.Run("sets refreshing state and returns commands", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
 
-	msg := refreshTickMsg(time.Now())
-	_, cmd := m.Update(msg)
+		msg := refreshTickMsg(time.Now())
+		newModel, cmd := m.Update(msg)
+		updatedModel := newModel.(Model)
 
-	// Should return a batch command with tick and refresh
-	if cmd == nil {
-		t.Error("expected command after refresh tick")
-	}
+		// Should set refreshing state
+		if !updatedModel.refreshing {
+			t.Error("expected refreshing=true after tick")
+		}
+
+		// Should return a batch command with tick and refresh
+		if cmd == nil {
+			t.Error("expected command after refresh tick")
+		}
+	})
+
+	t.Run("refresh completion clears refreshing state", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.refreshing = true
+
+		sessions := []*session.Session{{ID: "1"}}
+		msg := sessionsRefreshedMsg{Sessions: sessions, Error: nil}
+
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		// Should clear refreshing state
+		if updatedModel.refreshing {
+			t.Error("expected refreshing=false after refresh completes")
+		}
+	})
+
+	t.Run("refresh error clears refreshing state", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.refreshing = true
+
+		msg := sessionsRefreshedMsg{Sessions: nil, Error: errors.New("refresh failed")}
+
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		// Should clear refreshing state even on error
+		if updatedModel.refreshing {
+			t.Error("expected refreshing=false after refresh error")
+		}
+	})
 }
 
 // TestUpdateError verifies error message handling.

@@ -72,6 +72,9 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) (tea.Model, tea.Cmd) 
 
 // handleSessionsRefreshed processes refresh results.
 func (m Model) handleSessionsRefreshed(msg sessionsRefreshedMsg) (tea.Model, tea.Cmd) {
+	// Clear the refreshing indicator
+	m.refreshing = false
+
 	if msg.Error != nil {
 		m.lastError = msg.Error
 		return m, nil
@@ -103,6 +106,9 @@ func (m Model) handleStatusUpdated(msg statusUpdatedMsg) (tea.Model, tea.Cmd) {
 
 // handleRefreshTick processes the auto-refresh tick.
 func (m Model) handleRefreshTick(_ refreshTickMsg) (tea.Model, tea.Cmd) {
+	// Mark refresh as in progress for visual indicator
+	m.refreshing = true
+
 	// Schedule the next tick and trigger a refresh
 	return m, tea.Batch(
 		m.tickCmd(),

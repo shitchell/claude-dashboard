@@ -97,6 +97,10 @@ type Model struct {
 	// loading indicates whether sessions are being loaded.
 	loading bool
 
+	// refreshing indicates whether a background refresh is in progress.
+	// This is used to show a visual indicator during auto-refresh.
+	refreshing bool
+
 	// error holds the last error that occurred, if any.
 	// This is displayed to the user until cleared.
 	lastError error
@@ -204,6 +208,7 @@ func NewModel(cfg ModelConfig) Model {
 		windowWidth:      0,
 		windowHeight:     0,
 		loading:          true,
+		refreshing:       false,
 		lastError:        nil,
 		showHelp:         false,
 		refreshInterval:  refreshInterval,
@@ -262,7 +267,18 @@ func (m Model) refreshSessionsCmd() tea.Cmd {
 }
 
 // tickCmd returns a command that sends a tick after the refresh interval.
+// Returns nil if auto-refresh is disabled or the interval is zero.
 func (m Model) tickCmd() tea.Cmd {
+	// Check if auto-refresh is enabled via config
+	if m.config != nil && !m.config.Refresh.Enabled {
+		return nil
+	}
+
+	// Check if refresh interval is valid
+	if m.refreshInterval == 0 {
+		return nil
+	}
+
 	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg {
 		return refreshTickMsg(t)
 	})
@@ -289,6 +305,11 @@ func (m Model) FilteredSessionCount() int {
 // IsLoading returns true if sessions are currently being loaded.
 func (m Model) IsLoading() bool {
 	return m.loading
+}
+
+// IsRefreshing returns true if a background refresh is in progress.
+func (m Model) IsRefreshing() bool {
+	return m.refreshing
 }
 
 // LastError returns the last error that occurred, or nil.
