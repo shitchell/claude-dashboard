@@ -581,3 +581,197 @@ func TestMergeConfig(t *testing.T) {
 		t.Errorf("Widths.Preview = %d, want %d", dst.Widths.Preview, constants.DefaultColumnWidthPreview)
 	}
 }
+
+func TestConfigPath(t *testing.T) {
+	// ConfigPath should return a valid path
+	path := ConfigPath()
+	if path == "" {
+		t.Error("ConfigPath() returned empty string")
+	}
+
+	// Path should end with config.yaml
+	if filepath.Base(path) != "config.yaml" && filepath.Base(path) != "config.yml" {
+		t.Errorf("ConfigPath() should end with config.yaml or config.yml, got %q", filepath.Base(path))
+	}
+}
+
+func TestValidateMoreEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr error
+	}{
+		{
+			name: "negative preview width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Preview = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative modified width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Modified = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative status width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Status = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative project width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Project = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative messages width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Messages = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative turns width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Turns = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative model width",
+			modify: func(cfg *Config) {
+				cfg.Widths.Model = -1
+			},
+			wantErr: ErrInvalidColumnWidth,
+		},
+		{
+			name: "negative grid card height",
+			modify: func(cfg *Config) {
+				cfg.Grid.CardHeight = -1
+			},
+			wantErr: ErrInvalidGridCardSize,
+		},
+		{
+			name: "negative grid gap",
+			modify: func(cfg *Config) {
+				cfg.Grid.Gap = -1
+			},
+			wantErr: ErrInvalidGridCardSize,
+		},
+		{
+			name: "negative max preview length",
+			modify: func(cfg *Config) {
+				cfg.Sessions.MaxPreviewLength = -1
+			},
+			wantErr: ErrInvalidMaxLength,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Defaults()
+			tt.modify(&cfg)
+
+			err := validate(&cfg)
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Errorf("validate() error = %v, want nil", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("validate() error = nil, want %v", tt.wantErr)
+				} else {
+					var valErr *ValidationError
+					if !errors.As(err, &valErr) {
+						t.Errorf("error should be ValidationError, got %T", err)
+					} else if !errors.Is(valErr.Err, tt.wantErr) {
+						t.Errorf("validate() error = %v, want %v", valErr.Err, tt.wantErr)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMergeConfigWithRawComplexConfig(t *testing.T) {
+	yaml := `
+mode: grid
+layout: list
+columns:
+  - name
+  - status
+widths:
+  name: 30
+  preview: 50
+  modified: 12
+  status: 10
+  project: 20
+  messages: 8
+  turns: 6
+  model: 15
+side_panel:
+  enabled: true
+  min_width: 25
+  width: 40
+grid:
+  card_width: 40
+  card_height: 8
+  gap: 3
+indicators:
+  active: "> "
+  idle: "- "
+  exited: "x "
+sort:
+  field: modified
+  ascending: false
+filter:
+  max_age: "30d"
+  min_age: "1h"
+  project: "test"
+  exclude_exited: true
+  search_text: "search"
+  model: "opus"
+tmux:
+  enabled: true
+  highlight_running: true
+  navigation_method: select-pane
+cache:
+  enabled: true
+  dir: ".cache"
+  filename: "cache.json"
+refresh:
+  enabled: true
+  interval: 15
+sessions:
+  projects_dir: ".claude/projects"
+  max_name_length: 40
+  max_preview_length: 80
+`
+	cfg, err := LoadFromYAML([]byte(yaml))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+
+	// Verify all values were properly loaded
+	if cfg.Mode != DisplayModeGrid {
+		t.Errorf("Mode = %v, want grid", cfg.Mode)
+	}
+	if cfg.Widths.Name != 30 {
+		t.Errorf("Widths.Name = %d, want 30", cfg.Widths.Name)
+	}
+	if cfg.SidePanel.MinWidth != 25 {
+		t.Errorf("SidePanel.MinWidth = %d, want 25", cfg.SidePanel.MinWidth)
+	}
+	if cfg.Grid.CardWidth != 40 {
+		t.Errorf("Grid.CardWidth = %d, want 40", cfg.Grid.CardWidth)
+	}
+	if cfg.Filter.MaxAge != "30d" {
+		t.Errorf("Filter.MaxAge = %q, want 30d", cfg.Filter.MaxAge)
+	}
+}

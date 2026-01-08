@@ -349,3 +349,99 @@ func TestContentBlockTypeConstants(t *testing.T) {
 		}
 	}
 }
+
+func TestParseLineSystemMalformed(t *testing.T) {
+	// System type but malformed content
+	data := []byte(`{"type":"system","subtype":"invalid json inside`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed system line")
+	}
+}
+
+func TestParseLineUserMalformed(t *testing.T) {
+	// User type but malformed
+	data := []byte(`{"type":"user","message":{"role":"user"`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed user line")
+	}
+}
+
+func TestParseLineAssistantMalformed(t *testing.T) {
+	// Assistant type but malformed
+	data := []byte(`{"type":"assistant","message":{"id":"msg`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed assistant line")
+	}
+}
+
+func TestParseLineSummaryMalformed(t *testing.T) {
+	// Summary type but malformed
+	data := []byte(`{"type":"summary","summary":"incomplete`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed summary line")
+	}
+}
+
+func TestParseLineFileHistoryMalformed(t *testing.T) {
+	// File history type but malformed
+	data := []byte(`{"type":"file-history-snapshot","messageId":"msg`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed file-history-snapshot line")
+	}
+}
+
+func TestParseLineQueueOpMalformed(t *testing.T) {
+	// Queue operation type but malformed
+	data := []byte(`{"type":"queue-operation","operation":"add`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed queue-operation line")
+	}
+}
+
+func TestParseLineResultMalformed(t *testing.T) {
+	// Result type but malformed
+	data := []byte(`{"type":"result","subtype":"success`)
+
+	_, err := ParseLine(data)
+	if err == nil {
+		t.Error("ParseLine() should return error for malformed result line")
+	}
+}
+
+func TestUserMessageGetTextContentMalformed(t *testing.T) {
+	// Content that is neither string nor array of content blocks
+	msg := UserMessage{
+		Role:    "user",
+		Content: json.RawMessage(`{"invalid":"object"}`),
+	}
+
+	content := msg.GetTextContent()
+	if content != "" {
+		t.Errorf("GetTextContent() = %q, want empty string for invalid content", content)
+	}
+}
+
+func TestUserMessageGetTextContentWithNonTextBlocks(t *testing.T) {
+	// Array with non-text blocks (should skip them)
+	msg := UserMessage{
+		Role:    "user",
+		Content: json.RawMessage(`[{"type":"tool_result","content":"result"},{"type":"text","text":"actual text"}]`),
+	}
+
+	content := msg.GetTextContent()
+	if content != "actual text" {
+		t.Errorf("GetTextContent() = %q, want %q", content, "actual text")
+	}
+}

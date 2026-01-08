@@ -279,3 +279,110 @@ func TestScanAgentFileFields(t *testing.T) {
 		t.Errorf("SessionID = %q, want %q", result.SessionID, "xyz789")
 	}
 }
+
+// TestScanProjectsPathIsFile verifies scanner handles path being a file.
+func TestScanProjectsPathIsFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "notadir")
+
+	// Create a file instead of a directory
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	scanner, err := NewScanner(filePath)
+	if err != nil {
+		t.Fatalf("NewScanner() error = %v", err)
+	}
+
+	results, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("Scan() error = %v, want nil", err)
+	}
+
+	if len(results) != 0 {
+		t.Errorf("Scan() returned %d results, want 0", len(results))
+	}
+}
+
+// TestScanWithFileInProjectsDir verifies scanner skips files in projects dir.
+func TestScanWithFileInProjectsDir(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file directly in the projects directory (should be skipped)
+	filePath := filepath.Join(tmpDir, "somefile.txt")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	// Also create a valid project dir with a session
+	projectDir := filepath.Join(tmpDir, "-home-user-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	sessionFile := filepath.Join(projectDir, "session.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"test"}`), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	scanner, err := NewScanner(tmpDir)
+	if err != nil {
+		t.Fatalf("NewScanner() error = %v", err)
+	}
+
+	results, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	// Should only find the session file, not somefile.txt
+	if len(results) != 1 {
+		t.Errorf("Scan() returned %d results, want 1", len(results))
+	}
+}
+
+// TestScanWithSubdirInProject verifies scanner skips subdirectories in project dirs.
+func TestScanWithSubdirInProject(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "-home-user-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	// Create a subdirectory inside the project dir (should be skipped)
+	subDir := filepath.Join(projectDir, "subdir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+
+	// Create a session file in the subdir (should be ignored - scanner only goes 2 levels)
+	nestedSession := filepath.Join(subDir, "nested.jsonl")
+	if err := os.WriteFile(nestedSession, []byte(`{"type":"test"}`), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	// Create a session at the correct level
+	sessionFile := filepath.Join(projectDir, "session.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"test"}`), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	scanner, err := NewScanner(tmpDir)
+	if err != nil {
+		t.Fatalf("NewScanner() error = %v", err)
+	}
+
+	results, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	// Should only find session.jsonl, not nested.jsonl
+	if len(results) != 1 {
+		t.Errorf("Scan() returned %d results, want 1", len(results))
+	}
+	if len(results) == 1 && results[0].SessionID != "session" {
+		t.Errorf("SessionID = %q, want %q", results[0].SessionID, "session")
+	}
+}

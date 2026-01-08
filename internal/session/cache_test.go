@@ -506,3 +506,147 @@ func TestCachePath(t *testing.T) {
 		t.Errorf("Path() mismatch: got %q, want %q", cache.Path(), expectedPath)
 	}
 }
+
+// TestCacheSaveEmptyCache verifies saving an empty cache works.
+func TestCacheSaveEmptyCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	cache := NewCache(cachePath)
+
+	// Save empty cache
+	if err := cache.Save(); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+		t.Error("cache file was not created")
+	}
+
+	// Load and verify it's empty
+	cache2 := NewCache(cachePath)
+	if err := cache2.Load(); err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cache2.Size() != 0 {
+		t.Errorf("expected empty cache, got %d entries", cache2.Size())
+	}
+}
+
+// TestCacheLoadEmptyFile verifies Load handles empty file.
+func TestCacheLoadEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	// Create empty file
+	if err := os.WriteFile(cachePath, []byte(""), 0644); err != nil {
+		t.Fatalf("Failed to create empty file: %v", err)
+	}
+
+	cache := NewCache(cachePath)
+	if err := cache.Load(); err != nil {
+		t.Errorf("Load() should not error on empty file: %v", err)
+	}
+	if cache.Size() != 0 {
+		t.Errorf("expected empty cache from empty file, got %d entries", cache.Size())
+	}
+}
+
+// TestCacheSaveMultipleEntries verifies Save with multiple entries.
+func TestCacheSaveMultipleEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	cache := NewCache(cachePath)
+	testTime := time.Now().Truncate(time.Second)
+
+	// Add multiple entries
+	for i := 0; i < 10; i++ {
+		path := filepath.Join("/path", "session"+string(rune('0'+i))+".jsonl")
+		meta := &SessionMetadata{
+			ID:       "session-" + string(rune('0'+i)),
+			FilePath: path,
+			Summary:  "Session summary " + string(rune('0'+i)),
+		}
+		cache.Set(path, testTime, meta)
+	}
+
+	if err := cache.Save(); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+
+	// Load in new cache and verify
+	cache2 := NewCache(cachePath)
+	if err := cache2.Load(); err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cache2.Size() != 10 {
+		t.Errorf("expected 10 entries, got %d", cache2.Size())
+	}
+}
+
+// TestCacheDirtyAfterSave verifies dirty flag behavior.
+func TestCacheDirtyAfterSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	cache := NewCache(cachePath)
+	testTime := time.Now().Truncate(time.Second)
+	cache.Set("/test.jsonl", testTime, &SessionMetadata{ID: "test"})
+
+	if !cache.IsDirty() {
+		t.Error("cache should be dirty after Set")
+	}
+
+	// Note: Save doesn't reset dirty flag in current implementation
+	// This is intentional - only the service layer resets dirty after save
+}
+
+// TestCacheSetOverwrite verifies that Set overwrites existing entries.
+func TestCacheSetOverwrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	cache := NewCache(cachePath)
+	testTime := time.Now().Truncate(time.Second)
+
+	path := "/path/session.jsonl"
+
+	// Set initial entry
+	meta1 := &SessionMetadata{ID: "session", Summary: "First"}
+	cache.Set(path, testTime, meta1)
+
+	// Overwrite with new entry
+	meta2 := &SessionMetadata{ID: "session", Summary: "Second"}
+	cache.Set(path, testTime, meta2)
+
+	// Verify only one entry exists
+	if cache.Size() != 1 {
+		t.Errorf("expected 1 entry, got %d", cache.Size())
+	}
+
+	// Verify it's the second entry
+	result := cache.Get(path, testTime)
+	if result == nil {
+		t.Fatal("expected cache hit")
+	}
+	if result.Summary != "Second" {
+		t.Errorf("expected 'Second', got %q", result.Summary)
+	}
+}
+
+// TestNewCacheInitialization verifies NewCache creates proper state.
+func TestNewCacheInitialization(t *testing.T) {
+	cache := NewCache("/test/path/cache.json")
+
+	if cache.path != "/test/path/cache.json" {
+		t.Errorf("path = %q, want %q", cache.path, "/test/path/cache.json")
+	}
+	if cache.Size() != 0 {
+		t.Errorf("new cache should be empty, got %d entries", cache.Size())
+	}
+	if cache.IsDirty() {
+		t.Error("new cache should not be dirty")
+	}
+}

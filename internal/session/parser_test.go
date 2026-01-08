@@ -362,3 +362,170 @@ func TestParseAgentFile(t *testing.T) {
 		t.Errorf("ID = %q, want %q", metadata.ID, "abc123")
 	}
 }
+
+func TestParseLastEntryWithSystem(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	content := `{"type":"system","subtype":"init","uuid":"init","timestamp":"2025-01-01T12:00:00Z","sessionId":"test","model":"claude-opus-4-5-20251101","cwd":"/home/user/project"}`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	parser := NewParser(nil)
+	entry, err := parser.ParseLastEntry(filePath)
+	if err != nil {
+		t.Fatalf("ParseLastEntry() error = %v", err)
+	}
+
+	if entry.Type != MessageTypeSystem {
+		t.Errorf("Type = %q, want %q", entry.Type, MessageTypeSystem)
+	}
+	if entry.Subtype != "init" {
+		t.Errorf("Subtype = %q, want %q", entry.Subtype, "init")
+	}
+}
+
+func TestParseLastEntryWithUser(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	content := `{"type":"system","subtype":"init","cwd":"/home/user/project"}
+{"type":"user","uuid":"u1","timestamp":"2025-01-01T12:00:00Z","message":{"role":"user","content":"Hello world"}}`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	parser := NewParser(nil)
+	entry, err := parser.ParseLastEntry(filePath)
+	if err != nil {
+		t.Fatalf("ParseLastEntry() error = %v", err)
+	}
+
+	if entry.Type != MessageTypeUser {
+		t.Errorf("Type = %q, want %q", entry.Type, MessageTypeUser)
+	}
+	if entry.Preview != "Hello world" {
+		t.Errorf("Preview = %q, want %q", entry.Preview, "Hello world")
+	}
+	if entry.IsToolResult {
+		t.Error("IsToolResult = true, want false")
+	}
+}
+
+func TestParseLastEntryWithToolResult(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	content := `{"type":"system","subtype":"init","cwd":"/home/user/project"}
+{"type":"user","uuid":"u1","timestamp":"2025-01-01T12:00:00Z","message":{"role":"user","content":"tool result"},"toolUseResult":{"type":"file"}}`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	parser := NewParser(nil)
+	entry, err := parser.ParseLastEntry(filePath)
+	if err != nil {
+		t.Fatalf("ParseLastEntry() error = %v", err)
+	}
+
+	if !entry.IsToolResult {
+		t.Error("IsToolResult = false, want true")
+	}
+}
+
+func TestParseLastEntryWithAssistant(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	content := `{"type":"system","subtype":"init","cwd":"/home/user/project"}
+{"type":"assistant","uuid":"a1","timestamp":"2025-01-01T12:00:00Z","message":{"id":"msg_1","type":"message","model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"I can help with that."}]}}`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	parser := NewParser(nil)
+	entry, err := parser.ParseLastEntry(filePath)
+	if err != nil {
+		t.Fatalf("ParseLastEntry() error = %v", err)
+	}
+
+	if entry.Type != MessageTypeAssistant {
+		t.Errorf("Type = %q, want %q", entry.Type, MessageTypeAssistant)
+	}
+	if entry.Preview != "I can help with that." {
+		t.Errorf("Preview = %q, want %q", entry.Preview, "I can help with that.")
+	}
+}
+
+func TestParseLastEntryNonexistentFile(t *testing.T) {
+	parser := NewParser(nil)
+	_, err := parser.ParseLastEntry("/nonexistent/path/file.jsonl")
+	if err == nil {
+		t.Error("ParseLastEntry() should return error for nonexistent file")
+	}
+}
+
+func TestParseLastEntryMalformedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	content := `{this is not valid json}`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	parser := NewParser(nil)
+	_, err := parser.ParseLastEntry(filePath)
+	if err != ErrMalformedJSON {
+		t.Errorf("ParseLastEntry() error = %v, want ErrMalformedJSON", err)
+	}
+}
+
+func TestSplitLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected int
+	}{
+		{
+			name:     "single line no newline",
+			input:    []byte("single line"),
+			expected: 1,
+		},
+		{
+			name:     "single line with newline",
+			input:    []byte("single line\n"),
+			expected: 1, // Empty string after newline is not added
+		},
+		{
+			name:     "multiple lines",
+			input:    []byte("line1\nline2\nline3"),
+			expected: 3,
+		},
+		{
+			name:     "windows line endings",
+			input:    []byte("line1\r\nline2\r\n"),
+			expected: 2,
+		},
+		{
+			name:     "empty",
+			input:    []byte(""),
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := splitLines(tt.input)
+			if len(lines) != tt.expected {
+				t.Errorf("splitLines() returned %d lines, want %d", len(lines), tt.expected)
+			}
+		})
+	}
+}
+
+func TestDefaultParserConfig(t *testing.T) {
+	config := DefaultParserConfig()
+	if config.MaxScanBytes != 64*1024 {
+		t.Errorf("MaxScanBytes = %d, want %d", config.MaxScanBytes, 64*1024)
+	}
+	if config.BufferSize != 64*1024 {
+		t.Errorf("BufferSize = %d, want %d", config.BufferSize, 64*1024)
+	}
+}

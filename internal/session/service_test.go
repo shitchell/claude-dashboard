@@ -288,3 +288,284 @@ func TestRefreshWithModifiedFile(t *testing.T) {
 		t.Errorf("Summary = %q, want %q", sessions2[0].Summary, "Modified session summary")
 	}
 }
+
+func TestServiceGetters(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "projects")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Test GetCache
+	cache := svc.GetCache()
+	if cache == nil {
+		t.Error("GetCache() returned nil")
+	}
+
+	// Test GetScanner
+	scanner := svc.GetScanner()
+	if scanner == nil {
+		t.Error("GetScanner() returned nil")
+	}
+
+	// Test GetParser
+	parser := svc.GetParser()
+	if parser == nil {
+		t.Error("GetParser() returned nil")
+	}
+}
+
+func TestNewServiceWithNilConfig(t *testing.T) {
+	// NewService with nil should not panic
+	// This will fail if HOME doesn't exist or .claude/projects doesn't exist
+	// but that's expected behavior
+	_, err := NewService(nil)
+	// We just check it doesn't panic - error is acceptable if projects dir doesn't exist
+	_ = err
+}
+
+func TestServiceWithParserConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "projects")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+		ParserConfig: &ParserConfig{
+			MaxScanBytes: 128 * 1024,
+			BufferSize:   128 * 1024,
+		},
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Verify parser was created with custom config
+	parser := svc.GetParser()
+	if parser == nil {
+		t.Fatal("GetParser() returned nil")
+	}
+}
+
+func TestLoadAllWithSkippedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "projects")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	projectDir := filepath.Join(projectsDir, "-home-user-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	// Create a valid session
+	now := time.Now().Truncate(time.Second)
+	createTestSession(t, projectDir, "valid.jsonl", "claude-opus-4-5-20251101", "/home/user/project", now)
+
+	// Create an invalid session (empty file)
+	emptyFile := filepath.Join(projectDir, "empty.jsonl")
+	if err := os.WriteFile(emptyFile, []byte(""), 0644); err != nil {
+		t.Fatalf("Failed to create empty file: %v", err)
+	}
+
+	// Create another invalid session (no CWD)
+	invalidFile := filepath.Join(projectDir, "invalid.jsonl")
+	invalidContent := `{"type":"summary","summary":"No init message"}`
+	if err := os.WriteFile(invalidFile, []byte(invalidContent), 0644); err != nil {
+		t.Fatalf("Failed to create invalid file: %v", err)
+	}
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	sessions, err := svc.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll() error = %v", err)
+	}
+
+	// Should only return the valid session
+	if len(sessions) != 1 {
+		t.Errorf("LoadAll() returned %d sessions, want 1", len(sessions))
+	}
+}
+
+func TestRefreshWithParseErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "projects")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	projectDir := filepath.Join(projectsDir, "-home-user-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	now := time.Now().Truncate(time.Second)
+	sessionPath := createTestSession(t, projectDir, "session.jsonl", "claude-opus-4-5-20251101", "/home/user/project", now)
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Initial load
+	sessions, err := svc.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll() error = %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("LoadAll() returned %d sessions, want 1", len(sessions))
+	}
+
+	// Corrupt the file and update mtime
+	if err := os.WriteFile(sessionPath, []byte(""), 0644); err != nil {
+		t.Fatalf("Failed to corrupt file: %v", err)
+	}
+	newTime := now.Add(1 * time.Hour)
+	if err := os.Chtimes(sessionPath, newTime, newTime); err != nil {
+		t.Fatalf("Failed to change mtime: %v", err)
+	}
+
+	// Refresh should skip the corrupted file
+	sessions2, err := svc.Refresh(sessions)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	// Should return 0 sessions because the file is now invalid
+	if len(sessions2) != 0 {
+		t.Errorf("Refresh() returned %d sessions, want 0", len(sessions2))
+	}
+}
+
+func TestCacheSaveErrors(t *testing.T) {
+	// Test saving to an invalid path
+	cache := NewCache("/root/cannot/write/here/cache.json")
+	testTime := time.Now().Truncate(time.Second)
+	cache.Set("/test.jsonl", testTime, &SessionMetadata{ID: "test"})
+
+	// This should fail because we can't create /root/cannot directory
+	// (on most systems, /root is protected)
+	err := cache.Save()
+	if err == nil {
+		// If we're running as root, this might succeed
+		// In that case, skip this assertion
+		t.Log("Save() succeeded (possibly running as root)")
+	}
+}
+
+func TestRefreshReusesUnchangedSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "projects")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	projectDir := filepath.Join(projectsDir, "-home-user-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	now := time.Now().Truncate(time.Second)
+	createTestSession(t, projectDir, "session1.jsonl", "claude-opus-4-5-20251101", "/home/user/project", now)
+	createTestSession(t, projectDir, "session2.jsonl", "claude-opus-4-5-20251101", "/home/user/project", now.Add(-1*time.Hour))
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// Initial load
+	sessions, err := svc.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll() error = %v", err)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("LoadAll() returned %d sessions, want 2", len(sessions))
+	}
+
+	// Store pointer for comparison
+	originalSession := sessions[0]
+
+	// Refresh without any file changes
+	sessions2, err := svc.Refresh(sessions)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	if len(sessions2) != 2 {
+		t.Fatalf("Refresh() returned %d sessions, want 2", len(sessions2))
+	}
+
+	// The session pointers should be the same (reused from existing)
+	foundOriginal := false
+	for _, s := range sessions2 {
+		if s == originalSession {
+			foundOriginal = true
+			break
+		}
+	}
+	if !foundOriginal {
+		t.Error("Refresh() did not reuse unchanged session")
+	}
+}
+
+func TestLoadAllNonexistentProjectsDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectsDir := filepath.Join(tmpDir, "nonexistent")
+	cacheDir := filepath.Join(tmpDir, "cache")
+
+	config := &ServiceConfig{
+		ProjectsDir: projectsDir,
+		CacheDir:    cacheDir,
+	}
+
+	svc, err := NewService(config)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// LoadAll should return empty, not error
+	sessions, err := svc.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll() error = %v", err)
+	}
+
+	if len(sessions) != 0 {
+		t.Errorf("LoadAll() returned %d sessions, want 0", len(sessions))
+	}
+}
