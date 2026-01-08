@@ -83,8 +83,8 @@ func NewParser(config *ParserConfig) *Parser {
 }
 
 // Parse extracts metadata from a JSONL file without loading the entire file.
-// It reads the file line by line to find the init message and summary,
-// counting messages and turns along the way.
+// It reads the file line by line to find session metadata from user/assistant
+// messages and summary, counting messages and turns along the way.
 func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -132,7 +132,7 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	scanner.Buffer(buf, p.config.BufferSize)
 
 	var (
-		foundInit     bool
+		foundMetadata bool // True once we've found CWD and Model
 		messageCount  int
 		turnCount     int
 		lastUserUUID  string
@@ -157,18 +157,28 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 
 		switch generic.Type {
 		case MessageTypeSystem:
-			if generic.Subtype == string(SystemSubtypeInit) && !foundInit {
+			if generic.Subtype == string(SystemSubtypeInit) && !foundMetadata {
 				var sysLine SystemLine
 				if err := json.Unmarshal(line, &sysLine); err == nil {
-					foundInit = true
-					metadata.Model = sysLine.Model
-					metadata.CWD = sysLine.CWD
+					if sysLine.Model != "" {
+						metadata.Model = sysLine.Model
+					}
+					if sysLine.CWD != "" {
+						metadata.CWD = sysLine.CWD
+					}
+					if metadata.Model != "" && metadata.CWD != "" {
+						foundMetadata = true
+					}
 				}
 			}
 
 		case MessageTypeUser:
 			var userLine UserLine
 			if err := json.Unmarshal(line, &userLine); err == nil {
+				// Extract CWD from user message if not found yet
+				if metadata.CWD == "" && userLine.CWD != "" {
+					metadata.CWD = userLine.CWD
+				}
 				// Track for turn counting - a turn is a user message followed by assistant
 				if userLine.UUID != "" {
 					lastUserUUID = userLine.UUID
@@ -186,6 +196,14 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 			var assistLine AssistantLine
 			if err := json.Unmarshal(line, &assistLine); err == nil {
 				lastAssistant = &assistLine
+				// Extract model from assistant message if not found yet
+				if metadata.Model == "" && assistLine.Message.Model != "" {
+					metadata.Model = assistLine.Message.Model
+				}
+				// Check if we have all metadata now
+				if !foundMetadata && metadata.Model != "" && metadata.CWD != "" {
+					foundMetadata = true
+				}
 				// Count a turn when we have a matching parent
 				if lastUserUUID != "" && assistLine.ParentUUID != nil && *assistLine.ParentUUID == lastUserUUID {
 					turnCount++
@@ -217,7 +235,9 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 		}
 	}
 
-	if !foundInit {
+	// We need at least a CWD to consider this a valid session
+	// (Model might be empty for sessions that haven't had an assistant response yet)
+	if metadata.CWD == "" {
 		return nil, ErrNoInitMessage
 	}
 
