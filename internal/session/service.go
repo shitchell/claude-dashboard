@@ -88,6 +88,7 @@ func NewService(config *ServiceConfig) (*Service, error) {
 		logging.Warn("Failed to load cache, starting fresh: %v", err)
 	}
 
+	logging.Info("Session service initialized: projectsDir=%s, cacheDir=%s", projectsDir, cacheDir)
 	return &Service{
 		scanner:     scanner,
 		parser:      parser,
@@ -101,11 +102,16 @@ func NewService(config *ServiceConfig) (*Service, error) {
 // This is typically called on startup to populate the initial session list.
 // Returns a slice of Session pointers sorted by modification time (newest first).
 func (s *Service) LoadAll() ([]*Session, error) {
+	logging.Debug("Loading all sessions...")
+
 	// Scan for all session files
 	scanResults, err := s.scanner.ScanMainSessionsOnly()
 	if err != nil {
+		logging.Warn("Failed to scan for sessions: %v", err)
 		return nil, err
 	}
+
+	logging.Debug("Found %d session files to process", len(scanResults))
 
 	// Track valid paths for cache pruning
 	validPaths := make(map[string]struct{}, len(scanResults))
@@ -119,7 +125,17 @@ func (s *Service) LoadAll() ([]*Session, error) {
 	// Process each scan result
 	sessions := make([]*Session, 0, len(scanResults))
 	skippedCount := 0
+	cachedCount := 0
+	parsedCount := 0
 	for _, result := range scanResults {
+		// Check if we have a cache hit before processing
+		cached := s.cache.Get(result.FilePath, time.Unix(result.ModTime, 0))
+		if cached != nil {
+			cachedCount++
+		} else {
+			parsedCount++
+		}
+
 		session, err := s.processResult(result)
 		if err != nil {
 			// Skip files that can't be parsed
@@ -131,11 +147,8 @@ func (s *Service) LoadAll() ([]*Session, error) {
 		sessions = append(sessions, session)
 	}
 
-	if skippedCount > 0 {
-		logging.Info("Loaded %d sessions, skipped %d files", len(sessions), skippedCount)
-	} else {
-		logging.Debug("Loaded %d sessions", len(sessions))
-	}
+	logging.Info("Sessions loaded: %d total, %d from cache, %d parsed, %d skipped",
+		len(sessions), cachedCount, parsedCount-skippedCount, skippedCount)
 
 	// Save cache if there were changes
 	if s.cache.IsDirty() {
@@ -165,11 +178,16 @@ func (s *Service) LoadAll() ([]*Session, error) {
 //
 // Returns the updated session slice.
 func (s *Service) Refresh(existing []*Session) ([]*Session, error) {
+	logging.Debug("Refreshing session list (existing=%d)", len(existing))
+
 	// Scan for current session files
 	scanResults, err := s.scanner.ScanMainSessionsOnly()
 	if err != nil {
+		logging.Warn("Failed to scan for sessions during refresh: %v", err)
 		return existing, err
 	}
+
+	logging.Debug("Found %d session files during refresh", len(scanResults))
 
 	// Build maps for efficient lookup
 	// Map scan results by file path
@@ -218,6 +236,8 @@ func (s *Service) Refresh(existing []*Session) ([]*Session, error) {
 		}
 		sessions = append(sessions, session)
 	}
+
+	logging.Debug("Refresh complete: %d sessions", len(sessions))
 
 	// Save cache if there were changes
 	if s.cache.IsDirty() {

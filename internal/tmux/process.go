@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // Process format string for ps command.
@@ -114,6 +116,8 @@ func NewProcessListWithRunner(runner ProcessRunner) *ProcessList {
 //
 // Returns an error if the ps command fails.
 func (pl *ProcessList) Discover() error {
+	logging.Debug("Discovering running processes...")
+
 	runner := pl.runner
 	if runner == nil {
 		runner = &defaultProcessRunner{}
@@ -121,6 +125,7 @@ func (pl *ProcessList) Discover() error {
 
 	output, err := runner.ListProcesses()
 	if err != nil {
+		logging.Warn("Failed to list processes: %v", err)
 		return fmt.Errorf("listing processes: %w", err)
 	}
 
@@ -150,6 +155,7 @@ func (pl *ProcessList) parseOutput(output []byte) error {
 		}
 	}
 
+	logging.Debug("Discovered %d processes with TTYs", len(pl.processes))
 	return scanner.Err()
 }
 

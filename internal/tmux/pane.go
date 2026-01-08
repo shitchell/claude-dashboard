@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"strings"
 	"sync"
+
+	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
 // TmuxListPanesFormat is the format string used for tmux list-panes command.
@@ -106,6 +108,8 @@ func NormalizeTTY(tty string) string {
 // Returns ErrNotInTmux if not running inside a tmux session,
 // or an error if the tmux command fails.
 func (pm *PaneMap) Discover() error {
+	logging.Debug("Discovering tmux panes...")
+
 	var output []byte
 	var err error
 
@@ -116,6 +120,7 @@ func (pm *PaneMap) Discover() error {
 	}
 
 	if err != nil {
+		logging.Debug("Failed to discover tmux panes: %v", err)
 		return err
 	}
 
@@ -140,11 +145,13 @@ func (pm *PaneMap) parseOutput(output []byte) error {
 
 		pane := parsePaneLine(line)
 		if pane != nil {
+			logging.Debug("Found tmux pane: %s (tty=%s, session=%s)", pane.ID, pane.TTY, pane.SessionName)
 			pm.byTTY[pane.TTY] = pane
 			pm.byID[pane.ID] = pane
 		}
 	}
 
+	logging.Info("Discovered %d tmux panes", len(pm.byID))
 	return scanner.Err()
 }
 

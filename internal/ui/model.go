@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shitchell/claude-dashboard/internal/config"
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
@@ -192,6 +193,7 @@ func NewModel(cfg ModelConfig) Model {
 		layout = NewListLayoutFromConfig(cfg.Config, keys)
 	}
 
+	logging.Info("UI model initialized: layout=%s, refreshInterval=%v", layoutType, refreshInterval)
 	return Model{
 		sessions:         nil,
 		filteredSessions: nil,
@@ -222,6 +224,7 @@ func NewModel(cfg ModelConfig) Model {
 // Init initializes the model and returns the initial command.
 // This is called once when the program starts.
 func (m Model) Init() tea.Cmd {
+	logging.Debug("UI Init called, starting session load and refresh ticker")
 	return tea.Batch(
 		// Load sessions asynchronously
 		m.loadSessionsCmd(),

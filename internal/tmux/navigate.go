@@ -83,7 +83,10 @@ func NewNavigatorWithRunner(method string, runner CommandRunner) *Navigator {
 // ErrPaneNotFound if the pane doesn't exist,
 // or ErrNavigationFailed if the tmux command fails.
 func (n *Navigator) GoToPane(paneID string) error {
+	logging.Debug("Navigating to tmux pane: %s (method=%s)", paneID, n.method)
+
 	if paneID == "" {
+		logging.Debug("GoToPane called with empty pane ID")
 		return ErrPaneNotFound
 	}
 
@@ -124,6 +127,7 @@ func (n *Navigator) GoToPane(paneID string) error {
 		return ErrNavigationFailed
 	}
 
+	logging.Info("Successfully navigated to pane %s", paneID)
 	return nil
 }
 
@@ -141,7 +145,10 @@ func (n *Navigator) GoToPane(paneID string) error {
 // ErrClaudeNotFound if the claude executable is not in PATH,
 // or an error if the tmux command fails.
 func (n *Navigator) ResumeInNewPane(sessionID, cwd string) error {
+	logging.Debug("Resuming session %s in new pane (cwd=%s)", sessionID, cwd)
+
 	if sessionID == "" {
+		logging.Debug("ResumeInNewPane called with empty session ID")
 		return errors.New("session ID is required")
 	}
 

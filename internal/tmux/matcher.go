@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
@@ -83,22 +84,28 @@ func NewMatcherWithRunners(processRunner ProcessRunner, tmuxRunner CommandRunner
 //
 // Returns an error if either tmux or process discovery fails.
 func (m *Matcher) Refresh() error {
+	logging.Debug("Refreshing matcher state...")
+
 	// Discover tmux panes
 	if err := m.paneMap.Discover(); err != nil {
 		// If not in tmux, we can still continue without pane info
 		if err != ErrNotInTmux {
+			logging.Warn("Failed to discover tmux panes: %v", err)
 			return err
 		}
+		logging.Debug("Not running in tmux session, skipping pane discovery")
 	}
 
 	// Discover all processes
 	if err := m.processList.Discover(); err != nil {
+		logging.Warn("Failed to discover processes: %v", err)
 		return err
 	}
 
 	// Find Claude processes and match them to panes
 	m.findAndMatchClaudeProcesses()
 
+	logging.Debug("Matcher refresh complete")
 	return nil
 }
 
@@ -152,6 +159,8 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 
 		m.claudeProcesses = append(m.claudeProcesses, claudeProc)
 	}
+
+	logging.Debug("Found %d Claude processes", len(m.claudeProcesses))
 }
 
 // FindClaudeProcesses returns all detected Claude processes.
@@ -180,6 +189,7 @@ func (m *Matcher) MatchSessionToPane(sess *session.Session) *Pane {
 
 	// Strategy 1: Match by session ID
 	if paneID, ok := m.sessionToPaneID[sess.ID]; ok {
+		logging.Debug("Matched session %s to pane %s by session ID", sess.ID, paneID)
 		return m.paneMap.GetByID(paneID)
 	}
 
@@ -187,10 +197,12 @@ func (m *Matcher) MatchSessionToPane(sess *session.Session) *Pane {
 	if sess.CWD != "" {
 		resolvedCWD := resolveSymlinks(sess.CWD)
 		if paneID, ok := m.cwdToPaneID[resolvedCWD]; ok {
+			logging.Debug("Matched session %s to pane %s by CWD", sess.ID, paneID)
 			return m.paneMap.GetByID(paneID)
 		}
 	}
 
+	logging.Debug("No pane match found for session %s", sess.ID)
 	return nil
 }
 

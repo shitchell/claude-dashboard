@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,8 +116,15 @@ func TestDefaults(t *testing.T) {
 	if cfg.Cache.Enabled != DefaultCacheEnabled {
 		t.Errorf("Cache.Enabled = %v, want %v", cfg.Cache.Enabled, DefaultCacheEnabled)
 	}
-	if cfg.Cache.Dir != constants.CacheDir {
-		t.Errorf("Cache.Dir = %q, want %q", cfg.Cache.Dir, constants.CacheDir)
+	// Cache.Dir should be an absolute path ending with the cache dir constant
+	if !strings.HasSuffix(cfg.Cache.Dir, constants.CacheDir) {
+		t.Errorf("Cache.Dir = %q, should end with %q", cfg.Cache.Dir, constants.CacheDir)
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		expectedCacheDir := filepath.Join(homeDir, constants.CacheDir)
+		if cfg.Cache.Dir != expectedCacheDir {
+			t.Errorf("Cache.Dir = %q, want %q", cfg.Cache.Dir, expectedCacheDir)
+		}
 	}
 	if cfg.Cache.Filename != constants.CacheFileName {
 		t.Errorf("Cache.Filename = %q, want %q", cfg.Cache.Filename, constants.CacheFileName)
@@ -133,8 +143,15 @@ func TestDefaults(t *testing.T) {
 	}
 
 	// Sessions
-	if cfg.Sessions.ProjectsDir != constants.ClaudeProjectsDir {
-		t.Errorf("Sessions.ProjectsDir = %q, want %q", cfg.Sessions.ProjectsDir, constants.ClaudeProjectsDir)
+	// ProjectsDir should be an absolute path ending with the projects dir constant
+	if !strings.HasSuffix(cfg.Sessions.ProjectsDir, constants.ClaudeProjectsDir) {
+		t.Errorf("Sessions.ProjectsDir = %q, should end with %q", cfg.Sessions.ProjectsDir, constants.ClaudeProjectsDir)
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		expectedProjectsDir := filepath.Join(homeDir, constants.ClaudeProjectsDir)
+		if cfg.Sessions.ProjectsDir != expectedProjectsDir {
+			t.Errorf("Sessions.ProjectsDir = %q, want %q", cfg.Sessions.ProjectsDir, expectedProjectsDir)
+		}
 	}
 	if cfg.Sessions.MaxNameLength != constants.MaxNameLength {
 		t.Errorf("Sessions.MaxNameLength = %d, want %d", cfg.Sessions.MaxNameLength, constants.MaxNameLength)

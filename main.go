@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shitchell/claude-dashboard/internal/config"
 	"github.com/shitchell/claude-dashboard/internal/constants"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 	"github.com/shitchell/claude-dashboard/internal/ui"
 )
@@ -36,6 +37,15 @@ func main() {
 // It parses flags, loads configuration, and starts the TUI.
 // Returns an exit code.
 func run(args []string) int {
+	// Initialize logging early (writes to ~/.cache/claude-dashboard/logs/)
+	if err := logging.Init(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: warning: failed to initialize logging: %v\n", constants.AppName, err)
+		// Continue without logging - not fatal
+	}
+	defer logging.Close()
+
+	logging.Info("Starting %s version %s", constants.AppName, constants.Version)
+
 	// Parse command line flags
 	flags, err := config.ParseFlags(args)
 	if err != nil {

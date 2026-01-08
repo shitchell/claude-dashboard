@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
@@ -102,6 +104,15 @@ func Defaults() Config {
 	columnStrings := make([]string, len(DefaultColumnStrings))
 	copy(columnStrings, DefaultColumnStrings)
 
+	// Resolve home directory for absolute paths
+	homeDir, _ := os.UserHomeDir()
+	projectsDir := constants.ClaudeProjectsDir
+	cacheDir := constants.CacheDir
+	if homeDir != "" {
+		projectsDir = filepath.Join(homeDir, constants.ClaudeProjectsDir)
+		cacheDir = filepath.Join(homeDir, constants.CacheDir)
+	}
+
 	return Config{
 		Mode:           DefaultMode,
 		ModeString:     DefaultMode.String(),
@@ -148,7 +159,7 @@ func Defaults() Config {
 		},
 		Cache: CacheConfig{
 			Enabled:  DefaultCacheEnabled,
-			Dir:      constants.CacheDir,
+			Dir:      cacheDir,
 			Filename: constants.CacheFileName,
 		},
 		Refresh: RefreshConfig{
@@ -157,7 +168,7 @@ func Defaults() Config {
 			IntervalSeconds: int(constants.DefaultRefreshInterval / time.Second),
 		},
 		Sessions: SessionsConfig{
-			ProjectsDir:      constants.ClaudeProjectsDir,
+			ProjectsDir:      projectsDir,
 			MaxNameLength:    constants.MaxNameLength,
 			MaxPreviewLength: constants.MaxPreviewLength,
 		},

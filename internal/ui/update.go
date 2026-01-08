@@ -3,6 +3,7 @@ package ui
 import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
@@ -44,6 +45,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleWindowSize processes window resize events.
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	logging.Debug("Window resize: %dx%d", msg.Width, msg.Height)
 	m.windowWidth = msg.Width
 	m.windowHeight = msg.Height
 	m.ready = true
@@ -59,10 +61,12 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) (tea.Model, tea.Cmd) 
 	m.loading = false
 
 	if msg.Error != nil {
+		logging.Warn("Failed to load sessions: %v", msg.Error)
 		m.lastError = msg.Error
 		return m, nil
 	}
 
+	logging.Info("Sessions loaded: %d total", len(msg.Sessions))
 	m.sessions = msg.Sessions
 	m.applyFiltersAndSort()
 	m.restoreCursor()
@@ -76,9 +80,12 @@ func (m Model) handleSessionsRefreshed(msg sessionsRefreshedMsg) (tea.Model, tea
 	m.refreshing = false
 
 	if msg.Error != nil {
+		logging.Warn("Failed to refresh sessions: %v", msg.Error)
 		m.lastError = msg.Error
 		return m, nil
 	}
+
+	logging.Debug("Sessions refreshed: %d total", len(msg.Sessions))
 
 	// Save current cursor position before updating
 	m.saveCursor()
@@ -106,6 +113,7 @@ func (m Model) handleStatusUpdated(msg statusUpdatedMsg) (tea.Model, tea.Cmd) {
 
 // handleRefreshTick processes the auto-refresh tick.
 func (m Model) handleRefreshTick(_ refreshTickMsg) (tea.Model, tea.Cmd) {
+	logging.Debug("Auto-refresh tick triggered")
 	// Mark refresh as in progress for visual indicator
 	m.refreshing = true
 
@@ -118,12 +126,15 @@ func (m Model) handleRefreshTick(_ refreshTickMsg) (tea.Model, tea.Cmd) {
 
 // handleError processes error messages.
 func (m Model) handleError(msg errorMsg) (tea.Model, tea.Cmd) {
+	logging.Warn("UI error received: %v", msg.Error)
 	m.lastError = msg.Error
 	return m, nil
 }
 
 // handleKeyPress processes key press events.
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	logging.Debug("Key pressed: %s", msg.String())
+
 	// Handle help mode separately - most keys close help
 	if m.showHelp {
 		return m.handleKeyPressInHelp(msg)
@@ -138,6 +149,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	// Quit
 	case key.Matches(msg, m.keys.Quit):
+		logging.Debug("Quit key pressed")
 		return m, tea.Quit
 
 	// Navigation: Up
@@ -365,12 +377,15 @@ func (m Model) toggleHelp() (tea.Model, tea.Cmd) {
 // toggleViewMode toggles between list and grid view.
 func (m Model) toggleViewMode() (tea.Model, tea.Cmd) {
 	// Use the switchLayout method to toggle layout and view mode together
+	logging.Debug("Toggling view mode from %v", m.layoutType)
 	m.switchLayout()
+	logging.Debug("View mode changed to %v", m.layoutType)
 	return m, nil
 }
 
 // enterSearchMode enters search/filter mode.
 func (m Model) enterSearchMode() (tea.Model, tea.Cmd) {
+	logging.Debug("Entering search mode")
 	m.viewMode = ViewModeSearch
 	m.searchQuery = ""
 	return m, nil

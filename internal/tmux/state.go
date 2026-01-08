@@ -3,6 +3,7 @@ package tmux
 import (
 	"time"
 
+	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
@@ -176,10 +177,13 @@ func UpdateAllSessionStatuses(
 	matcher *Matcher,
 	parser *session.Parser,
 ) {
+	logging.Debug("Updating status for %d sessions", len(sessions))
+
 	// Refresh matcher state once
 	if err := matcher.Refresh(); err != nil {
 		// If refresh fails, mark all sessions as exited
 		// (we can't determine their actual status)
+		logging.Warn("Matcher refresh failed, marking all sessions as exited: %v", err)
 		for _, sess := range sessions {
 			if sess != nil {
 				sess.Status = session.StatusExited
@@ -190,7 +194,22 @@ func UpdateAllSessionStatuses(
 	}
 
 	// Update each session
+	activeCount := 0
+	idleCount := 0
+	exitedCount := 0
 	for _, sess := range sessions {
 		UpdateSessionStatus(sess, matcher, parser)
+		if sess != nil {
+			switch sess.Status {
+			case session.StatusActive:
+				activeCount++
+			case session.StatusIdle:
+				idleCount++
+			case session.StatusExited:
+				exitedCount++
+			}
+		}
 	}
+	logging.Debug("Session status update complete: %d active, %d idle, %d exited",
+		activeCount, idleCount, exitedCount)
 }

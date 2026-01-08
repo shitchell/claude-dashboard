@@ -73,6 +73,8 @@ func (c *Cache) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	logging.Info("Loading cache from: %s", c.path)
+
 	// Reset to empty state
 	c.entries = make(map[string]CacheEntry)
 	c.dirty = false
@@ -118,6 +120,7 @@ func (c *Cache) Load() error {
 		c.entries = cacheFile.Entries
 	}
 
+	logging.Info("Cache loaded successfully: %d entries", len(c.entries))
 	return nil
 }
 
@@ -176,6 +179,7 @@ func (c *Cache) Save() error {
 		return err
 	}
 
+	logging.Info("Cache saved successfully: %d entries to %s", len(c.entries), c.path)
 	return nil
 }
 
@@ -188,6 +192,7 @@ func (c *Cache) Get(path string, mtime time.Time) *SessionMetadata {
 
 	entry, exists := c.entries[path]
 	if !exists {
+		logging.Debug("Cache miss (not found): %s", path)
 		return nil
 	}
 
@@ -197,9 +202,11 @@ func (c *Cache) Get(path string, mtime time.Time) *SessionMetadata {
 	currentTime := mtime.Truncate(time.Second)
 
 	if !cachedTime.Equal(currentTime) {
+		logging.Debug("Cache miss (stale mtime): %s (cached=%v, current=%v)", path, cachedTime, currentTime)
 		return nil
 	}
 
+	logging.Debug("Cache hit: %s", path)
 	// Return a copy to prevent mutation
 	metadata := entry.Metadata
 	return &metadata
@@ -211,6 +218,7 @@ func (c *Cache) Set(path string, mtime time.Time, meta *SessionMetadata) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	logging.Debug("Cache set: %s (session=%s)", path, meta.ID)
 	c.entries[path] = CacheEntry{
 		Mtime:    mtime.Truncate(time.Second).Unix(),
 		Metadata: *meta,
@@ -225,11 +233,17 @@ func (c *Cache) Prune(validPaths map[string]struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	prunedCount := 0
 	for path := range c.entries {
 		if _, valid := validPaths[path]; !valid {
+			logging.Debug("Pruning stale cache entry: %s", path)
 			delete(c.entries, path)
 			c.dirty = true
+			prunedCount++
 		}
+	}
+	if prunedCount > 0 {
+		logging.Debug("Pruned %d stale cache entries", prunedCount)
 	}
 }
 

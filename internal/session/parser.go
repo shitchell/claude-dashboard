@@ -87,8 +87,11 @@ func NewParser(config *ParserConfig) *Parser {
 // It reads the file line by line to find session metadata from user/assistant
 // messages and summary, counting messages and turns along the way.
 func (p *Parser) Parse(path string) (*SessionMetadata, error) {
+	logging.Debug("Starting to parse session file: %s", path)
+
 	file, err := os.Open(path)
 	if err != nil {
+		logging.Debug("Failed to open session file: %s: %v", path, err)
 		return nil, err
 	}
 	defer file.Close()
@@ -96,10 +99,14 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	// Get file info
 	fileInfo, err := file.Stat()
 	if err != nil {
+		logging.Debug("Failed to stat session file: %s: %v", path, err)
 		return nil, err
 	}
 
+	logging.Debug("Session file size: %s (%d bytes)", path, fileInfo.Size())
+
 	if fileInfo.Size() == 0 {
+		logging.Debug("Session file is empty: %s", path)
 		return nil, ErrEmptyFile
 	}
 
@@ -240,7 +247,7 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	// We need at least a CWD to consider this a valid session
 	// (Model might be empty for sessions that haven't had an assistant response yet)
 	if metadata.CWD == "" {
-		logging.Debug("Session file missing CWD, skipping: %s", path)
+		logging.Warn("Session file missing CWD, skipping: %s", path)
 		return nil, ErrNoInitMessage
 	}
 
@@ -253,6 +260,9 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 	metadata.TurnCount = turnCount
 	metadata.Preview = lastPreview
 
+	logging.Debug("Parsed session %s: %d messages, %d turns, model=%s, cwd=%s",
+		sessionID, messageCount, turnCount, metadata.Model, metadata.CWD)
+
 	// If no summary was found but we have an assistant message, use that for summary
 	if metadata.Summary == "" && lastAssistant != nil {
 		for _, block := range lastAssistant.Message.Content {
@@ -264,14 +274,18 @@ func (p *Parser) Parse(path string) (*SessionMetadata, error) {
 		}
 	}
 
+	logging.Info("Successfully parsed session: %s (project=%s)", sessionID, metadata.ProjectName)
 	return metadata, nil
 }
 
 // ParseLastEntry reads only the last line(s) of a JSONL file to get the final state.
 // This is useful for quick status checks without parsing the entire file.
 func (p *Parser) ParseLastEntry(path string) (*LastEntry, error) {
+	logging.Debug("Parsing last entry from: %s", path)
+
 	file, err := os.Open(path)
 	if err != nil {
+		logging.Debug("Failed to open file for last entry: %s: %v", path, err)
 		return nil, err
 	}
 	defer file.Close()
@@ -279,10 +293,12 @@ func (p *Parser) ParseLastEntry(path string) (*LastEntry, error) {
 	// Get file size
 	fileInfo, err := file.Stat()
 	if err != nil {
+		logging.Debug("Failed to stat file for last entry: %s: %v", path, err)
 		return nil, err
 	}
 
 	if fileInfo.Size() == 0 {
+		logging.Debug("File is empty, cannot parse last entry: %s", path)
 		return nil, ErrEmptyFile
 	}
 
@@ -361,6 +377,7 @@ func (p *Parser) ParseLastEntry(path string) (*LastEntry, error) {
 		}
 	}
 
+	logging.Debug("Last entry parsed: type=%s, subtype=%s, complete=%v", entry.Type, entry.Subtype, entry.IsComplete)
 	return entry, nil
 }
 

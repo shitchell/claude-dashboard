@@ -66,17 +66,22 @@ type ScanResult struct {
 func (s *Scanner) Scan() ([]ScanResult, error) {
 	var results []ScanResult
 
+	logging.Debug("Starting session scan in directory: %s", s.ProjectsDir)
+
 	// Check if the projects directory exists
 	info, err := os.Stat(s.ProjectsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Directory doesn't exist, return empty results
+			logging.Debug("Projects directory does not exist: %s", s.ProjectsDir)
 			return results, nil
 		}
+		logging.Warn("Error checking projects directory: %s: %v", s.ProjectsDir, err)
 		return nil, err
 	}
 	if !info.IsDir() {
 		// Not a directory, return empty results
+		logging.Warn("Projects path is not a directory: %s", s.ProjectsDir)
 		return results, nil
 	}
 
@@ -89,6 +94,8 @@ func (s *Scanner) Scan() ([]ScanResult, error) {
 		}
 		return nil, err
 	}
+
+	logging.Debug("Found %d project directories to scan", len(projectDirs))
 
 	// Iterate through each project directory
 	for _, projectDir := range projectDirs {
@@ -146,10 +153,12 @@ func (s *Scanner) Scan() ([]ScanResult, error) {
 				result.SessionID = strings.TrimSuffix(fileName, ".jsonl")
 			}
 
+			logging.Debug("Found session file: %s (subagent=%v)", filePath, result.IsSubAgent)
 			results = append(results, result)
 		}
 	}
 
+	logging.Info("Session scan complete: found %d session files", len(results))
 	return results, nil
 }
 
