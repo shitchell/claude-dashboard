@@ -190,20 +190,20 @@ func TestViewSessionLine(t *testing.T) {
 
 // TestViewStatusIndicator verifies status indicator rendering.
 func TestViewStatusIndicator(t *testing.T) {
-	m := NewModel(ModelConfig{})
+	styles := DefaultStyles
 
 	tests := []struct {
 		status   session.Status
 		expected string
 	}{
-		{session.StatusActive, indicatorActive},
-		{session.StatusIdle, indicatorIdle},
-		{session.StatusExited, indicatorExited},
+		{session.StatusActive, IndicatorActive},
+		{session.StatusIdle, IndicatorIdle},
+		{session.StatusExited, IndicatorExited},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.status.String(), func(t *testing.T) {
-			indicator := m.renderStatusIndicator(tt.status)
+			indicator := styles.RenderStatusIndicator(tt.status)
 
 			if !strings.Contains(indicator, tt.expected) {
 				t.Errorf("expected indicator to contain %q, got %q", tt.expected, indicator)

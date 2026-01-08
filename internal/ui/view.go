@@ -4,68 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/shitchell/claude-dashboard/internal/session"
-)
-
-// Style constants for the UI.
-// These define colors, borders, and other visual properties.
-var (
-	// titleStyle is used for the application title.
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("15")). // White
-			Background(lipgloss.Color("62")). // Purple
-			Padding(0, 1)
-
-	// selectedStyle highlights the currently selected item.
-	selectedStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("15")).  // White
-			Background(lipgloss.Color("240")). // Gray
-			Padding(0, 1)
-
-	// normalStyle is for unselected items.
-	normalStyle = lipgloss.NewStyle().
-			Padding(0, 1)
-
-	// statusActiveStyle is for active sessions.
-	statusActiveStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("46")). // Green
-				Bold(true)
-
-	// statusIdleStyle is for idle sessions.
-	statusIdleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("226")) // Yellow
-
-	// statusExitedStyle is for exited sessions.
-	statusExitedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")) // Dark gray
-
-	// errorStyle is for error messages.
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")). // Red
-			Bold(true)
-
-	// helpStyle is for help text.
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // Dark gray
-
-	// searchStyle is for search mode indicator.
-	searchStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("45")). // Cyan
-			Bold(true)
-
-	// dimStyle is for less important text.
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // Dark gray
-)
-
-// Status indicator characters.
-const (
-	indicatorActive = "*"
-	indicatorIdle   = "~"
-	indicatorExited = " "
 )
 
 // View renders the model to a string for display.
@@ -97,7 +36,8 @@ func (m Model) View() string {
 
 // viewHeader renders the header bar.
 func (m Model) viewHeader() string {
-	title := titleStyle.Render("Claude Dashboard")
+	styles := DefaultStyles
+	title := styles.Title.Render("Claude Dashboard")
 
 	// Show session count
 	countStr := fmt.Sprintf(" [%d sessions", len(m.sessions))
@@ -105,7 +45,7 @@ func (m Model) viewHeader() string {
 		countStr += fmt.Sprintf(", %d shown", len(m.filteredSessions))
 	}
 	countStr += "]"
-	count := dimStyle.Render(countStr)
+	count := styles.Dim.Render(countStr)
 
 	// Show sort indicator
 	sortStr := fmt.Sprintf(" | Sort: %s", m.sortFieldName())
@@ -114,14 +54,14 @@ func (m Model) viewHeader() string {
 	} else {
 		sortStr += " (desc)"
 	}
-	sort := dimStyle.Render(sortStr)
+	sort := styles.Dim.Render(sortStr)
 
 	// Combine header elements
 	header := title + count + sort
 
 	// Show loading indicator
 	if m.loading {
-		header += dimStyle.Render(" | Loading...")
+		header += styles.Dim.Render(" | Loading...")
 	}
 
 	return header
@@ -189,11 +129,13 @@ func (m Model) viewList() string {
 
 // renderSessionLine renders a single session line.
 func (m Model) renderSessionLine(sess *session.Session, selected bool) string {
+	styles := DefaultStyles
+
 	// Build the session line content
 	var parts []string
 
 	// Status indicator
-	indicator := m.renderStatusIndicator(sess.Status)
+	indicator := styles.RenderStatusIndicator(sess.Status)
 	parts = append(parts, indicator)
 
 	// Project name (truncated)
@@ -206,35 +148,25 @@ func (m Model) renderSessionLine(sess *session.Session, selected bool) string {
 		summaryWidth = 10
 	}
 	summary := truncate(sess.Summary, summaryWidth)
-	parts = append(parts, dimStyle.Render(summary))
+	parts = append(parts, styles.Dim.Render(summary))
 
 	// Join parts with separators
 	lineContent := strings.Join(parts, " | ")
 
 	// Apply selection style
 	if selected {
-		return selectedStyle.Render("> " + lineContent)
+		return styles.ItemSelected.Render("> " + lineContent)
 	}
-	return normalStyle.Render("  " + lineContent)
-}
-
-// renderStatusIndicator returns a styled status indicator.
-func (m Model) renderStatusIndicator(status session.Status) string {
-	switch status {
-	case session.StatusActive:
-		return statusActiveStyle.Render(indicatorActive)
-	case session.StatusIdle:
-		return statusIdleStyle.Render(indicatorIdle)
-	default:
-		return statusExitedStyle.Render(indicatorExited)
-	}
+	return styles.ItemNormal.Render("  " + lineContent)
 }
 
 // viewFooter renders the footer bar with help hints.
 func (m Model) viewFooter() string {
+	styles := DefaultStyles
+
 	// Show error if present
 	if m.lastError != nil {
-		return errorStyle.Render("Error: " + m.lastError.Error())
+		return styles.Error.Render("Error: " + m.lastError.Error())
 	}
 
 	// Show help hints
@@ -247,12 +179,13 @@ func (m Model) viewFooter() string {
 		"?: help",
 		"q: quit",
 	}
-	return helpStyle.Render(strings.Join(hints, " | "))
+	return styles.Help.Render(strings.Join(hints, " | "))
 }
 
 // viewSearchBar renders the search input bar.
 func (m Model) viewSearchBar() string {
-	prompt := searchStyle.Render("Search: ")
+	styles := DefaultStyles
+	prompt := styles.SearchPrompt.Render("Search: ")
 	query := m.searchQuery
 	cursor := "_"
 	return prompt + query + cursor
@@ -260,13 +193,14 @@ func (m Model) viewSearchBar() string {
 
 // viewHelp renders the help overlay.
 func (m Model) viewHelp() string {
+	styles := DefaultStyles
 	var lines []string
 
-	lines = append(lines, titleStyle.Render("Help"))
+	lines = append(lines, styles.Title.Render("Help"))
 	lines = append(lines, "")
 
 	// Navigation section
-	lines = append(lines, "Navigation:")
+	lines = append(lines, styles.HelpSection.Render("Navigation:"))
 	lines = append(lines, "  j/k, up/down     Move cursor up/down")
 	lines = append(lines, "  g, home          Go to first session")
 	lines = append(lines, "  G, end           Go to last session")
@@ -274,7 +208,7 @@ func (m Model) viewHelp() string {
 	lines = append(lines, "")
 
 	// Actions section
-	lines = append(lines, "Actions:")
+	lines = append(lines, styles.HelpSection.Render("Actions:"))
 	lines = append(lines, "  enter            Select session (navigate to pane)")
 	lines = append(lines, "  r                Refresh session list")
 	lines = append(lines, "  s                Cycle sort order")
@@ -283,19 +217,19 @@ func (m Model) viewHelp() string {
 	lines = append(lines, "")
 
 	// Exit section
-	lines = append(lines, "Exit:")
+	lines = append(lines, styles.HelpSection.Render("Exit:"))
 	lines = append(lines, "  q, ctrl+c        Quit")
 	lines = append(lines, "  esc              Close help/cancel search")
 	lines = append(lines, "")
 
 	// Legend section
-	lines = append(lines, "Status Legend:")
-	lines = append(lines, fmt.Sprintf("  %s  Active (processing)", statusActiveStyle.Render(indicatorActive)))
-	lines = append(lines, fmt.Sprintf("  %s  Idle (waiting for input)", statusIdleStyle.Render(indicatorIdle)))
-	lines = append(lines, fmt.Sprintf("  %s  Exited (not running)", statusExitedStyle.Render("-")))
+	lines = append(lines, styles.HelpSection.Render("Status Legend:"))
+	lines = append(lines, fmt.Sprintf("  %s  Active (processing)", styles.StatusActive.Render(IndicatorActive)))
+	lines = append(lines, fmt.Sprintf("  %s  Idle (waiting for input)", styles.StatusIdle.Render(IndicatorIdle)))
+	lines = append(lines, fmt.Sprintf("  %s  Exited (not running)", styles.StatusExited.Render("-")))
 	lines = append(lines, "")
 
-	lines = append(lines, helpStyle.Render("Press any key to close help"))
+	lines = append(lines, styles.Help.Render("Press any key to close help"))
 
 	return strings.Join(lines, "\n")
 }
