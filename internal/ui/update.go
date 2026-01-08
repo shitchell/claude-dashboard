@@ -47,6 +47,10 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.windowWidth = msg.Width
 	m.windowHeight = msg.Height
 	m.ready = true
+
+	// Update UI mode based on window width
+	m.updateUIMode()
+
 	return m, nil
 }
 
@@ -354,12 +358,8 @@ func (m Model) toggleHelp() (tea.Model, tea.Cmd) {
 
 // toggleViewMode toggles between list and grid view.
 func (m Model) toggleViewMode() (tea.Model, tea.Cmd) {
-	switch m.viewMode {
-	case ViewModeList:
-		m.viewMode = ViewModeGrid
-	case ViewModeGrid:
-		m.viewMode = ViewModeList
-	}
+	// Use the switchLayout method to toggle layout and view mode together
+	m.switchLayout()
 	return m, nil
 }
 

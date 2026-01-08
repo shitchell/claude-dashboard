@@ -7,6 +7,18 @@ import (
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
+// View rendering constants define layout spacing.
+const (
+	// HeaderLines is the number of lines used by the header.
+	HeaderLines = 1
+
+	// FooterLines is the number of lines used by the footer.
+	FooterLines = 1
+
+	// SearchBarLines is the number of lines used by the search bar.
+	SearchBarLines = 1
+)
+
 // View renders the model to a string for display.
 // This is called after every Update to refresh the screen.
 func (m Model) View() string {
@@ -15,28 +27,79 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	var content string
-
 	// Build the view based on current mode
-	switch {
-	case m.showHelp:
-		content = m.viewHelp()
-	case m.viewMode == ViewModeSearch:
-		content = m.viewList() + "\n" + m.viewSearchBar()
-	case m.viewMode == ViewModeGrid:
-		// Grid view placeholder - will be implemented in a later phase
-		content = m.viewList()
-	default:
-		content = m.viewList()
+	if m.showHelp {
+		// Help overlay replaces the entire view
+		return m.renderFullView(m.viewHelp())
+	}
+
+	// Render main content using the layout system
+	var content string
+	if m.viewMode == ViewModeSearch {
+		// In search mode, render layout content with search bar
+		content = m.renderLayoutContent()
+		content += "\n" + m.viewSearchBar()
+	} else {
+		// Normal rendering through the layout system
+		content = m.renderLayoutContent()
 	}
 
 	// Build the full view with header and footer
-	return m.viewHeader() + "\n" + content + "\n" + m.viewFooter()
+	return m.renderFullView(content)
+}
+
+// renderFullView assembles the header, content, and footer into a complete view.
+func (m Model) renderFullView(content string) string {
+	var parts []string
+
+	// Header
+	parts = append(parts, m.viewHeader())
+
+	// Content
+	parts = append(parts, content)
+
+	// Footer
+	parts = append(parts, m.viewFooter())
+
+	return strings.Join(parts, "\n")
+}
+
+// renderLayoutContent renders the main session content using the current layout.
+func (m Model) renderLayoutContent() string {
+	// If no layout is set, fall back to legacy list view
+	if m.layout == nil {
+		return m.viewList()
+	}
+
+	// Calculate available height for the layout
+	// Subtract header, footer, and any additional UI elements
+	availableHeight := m.contentHeight()
+
+	// Handle search mode: reduce height for search bar
+	if m.viewMode == ViewModeSearch {
+		availableHeight -= SearchBarLines
+	}
+
+	// Get the styles to use (already adjusted for UI mode)
+	styles := m.styles
+	if styles == nil {
+		styles = &DefaultStyles
+	}
+
+	// Render through the layout
+	return m.layout.Render(
+		m.filteredSessions,
+		m.cursorIndex,
+		m.contentWidth(),
+		availableHeight,
+		styles,
+		m.config,
+	)
 }
 
 // viewHeader renders the header bar.
 func (m Model) viewHeader() string {
-	styles := DefaultStyles
+	styles := m.getStyles()
 	title := styles.Title.Render("Claude Dashboard")
 
 	// Show session count
@@ -56,15 +119,36 @@ func (m Model) viewHeader() string {
 	}
 	sort := styles.Dim.Render(sortStr)
 
+	// Show layout indicator
+	layoutStr := fmt.Sprintf(" | %s", m.layout.Name())
+	layout := styles.Dim.Render(layoutStr)
+
 	// Combine header elements
-	header := title + count + sort
+	header := title + count + sort + layout
 
 	// Show loading indicator
 	if m.loading {
 		header += styles.Dim.Render(" | Loading...")
 	}
 
+	// In side-panel mode, truncate header if needed
+	if m.uiMode == UIModeSidePanel && m.windowWidth > 0 {
+		// Simplified header for narrow displays
+		header = title + count
+		if m.loading {
+			header += styles.Dim.Render(" ...")
+		}
+	}
+
 	return header
+}
+
+// getStyles returns the current styles, falling back to defaults if nil.
+func (m Model) getStyles() *Styles {
+	if m.styles != nil {
+		return m.styles
+	}
+	return &DefaultStyles
 }
 
 // sortFieldName returns a human-readable name for the current sort field.
@@ -88,15 +172,18 @@ func (m Model) sortFieldName() string {
 }
 
 // viewList renders the session list view.
+// This is the legacy list view used as a fallback when no layout is set.
 func (m Model) viewList() string {
+	styles := m.getStyles()
+
 	if len(m.filteredSessions) == 0 {
 		if m.loading {
-			return "\n  Loading sessions..."
+			return "\n  " + styles.Dim.Render("Loading sessions...")
 		}
 		if len(m.sessions) == 0 {
-			return "\n  No sessions found."
+			return "\n  " + styles.Dim.Render("No sessions found.")
 		}
-		return "\n  No sessions match the current filter."
+		return "\n  " + styles.Dim.Render("No sessions match the current filter.")
 	}
 
 	var lines []string
@@ -128,8 +215,9 @@ func (m Model) viewList() string {
 }
 
 // renderSessionLine renders a single session line.
+// This is the legacy renderer used as a fallback when no layout is set.
 func (m Model) renderSessionLine(sess *session.Session, selected bool) string {
-	styles := DefaultStyles
+	styles := m.getStyles()
 
 	// Build the session line content
 	var parts []string
@@ -162,76 +250,156 @@ func (m Model) renderSessionLine(sess *session.Session, selected bool) string {
 
 // viewFooter renders the footer bar with help hints.
 func (m Model) viewFooter() string {
-	styles := DefaultStyles
+	styles := m.getStyles()
 
 	// Show error if present
 	if m.lastError != nil {
 		return styles.Error.Render("Error: " + m.lastError.Error())
 	}
 
-	// Show help hints
-	hints := []string{
-		"j/k: navigate",
-		"enter: select",
-		"s: sort",
-		"r: refresh",
-		"/: search",
-		"?: help",
-		"q: quit",
+	// Build help hints based on current mode
+	var hints []string
+
+	if m.viewMode == ViewModeSearch {
+		// Search mode hints
+		hints = []string{
+			"type: search",
+			"enter: confirm",
+			"esc: cancel",
+		}
+	} else {
+		// Normal mode hints - adjust for available width
+		if m.uiMode == UIModeSidePanel {
+			// Compact hints for side-panel mode
+			hints = []string{
+				"j/k",
+				"enter",
+				"?",
+				"q",
+			}
+		} else {
+			// Full hints for normal mode
+			hints = []string{
+				"j/k: navigate",
+				"enter: select",
+				"s: sort",
+				"r: refresh",
+				"/: search",
+				"tab: " + m.alternateLayoutName(),
+				"?: help",
+				"q: quit",
+			}
+		}
 	}
+
 	return styles.Help.Render(strings.Join(hints, " | "))
+}
+
+// alternateLayoutName returns the name of the layout that will be activated
+// when the user presses the toggle key.
+func (m Model) alternateLayoutName() string {
+	if m.layoutType == LayoutTypeList {
+		return "grid"
+	}
+	return "list"
 }
 
 // viewSearchBar renders the search input bar.
 func (m Model) viewSearchBar() string {
-	styles := DefaultStyles
+	styles := m.getStyles()
 	prompt := styles.SearchPrompt.Render("Search: ")
 	query := m.searchQuery
-	cursor := "_"
+	cursor := styles.SearchInput.Render("_")
 	return prompt + query + cursor
 }
 
 // viewHelp renders the help overlay.
 func (m Model) viewHelp() string {
-	styles := DefaultStyles
+	styles := m.getStyles()
 	var lines []string
 
-	lines = append(lines, styles.Title.Render("Help"))
+	// Title
+	lines = append(lines, styles.Title.Render(" Help "))
 	lines = append(lines, "")
+
+	// Build help entries with consistent formatting
+	type helpEntry struct {
+		key  string
+		desc string
+	}
 
 	// Navigation section
 	lines = append(lines, styles.HelpSection.Render("Navigation:"))
-	lines = append(lines, "  j/k, up/down     Move cursor up/down")
-	lines = append(lines, "  g, home          Go to first session")
-	lines = append(lines, "  G, end           Go to last session")
-	lines = append(lines, "  ctrl+u/d, pgup   Page up/down")
+	navEntries := []helpEntry{
+		{"j/k, up/down", "Move cursor up/down"},
+		{"h/l, left/right", "Move cursor left/right (grid)"},
+		{"g, home", "Go to first session"},
+		{"G, end", "Go to last session"},
+		{"ctrl+u/d, pgup/pgdn", "Page up/down"},
+	}
+	for _, e := range navEntries {
+		lines = append(lines, m.formatHelpEntry(e.key, e.desc, styles))
+	}
 	lines = append(lines, "")
 
 	// Actions section
 	lines = append(lines, styles.HelpSection.Render("Actions:"))
-	lines = append(lines, "  enter            Select session (navigate to pane)")
-	lines = append(lines, "  r                Refresh session list")
-	lines = append(lines, "  s                Cycle sort order")
-	lines = append(lines, "  /                Search sessions")
-	lines = append(lines, "  tab              Toggle list/grid view")
+	actionEntries := []helpEntry{
+		{"enter", "Select session (navigate to pane)"},
+		{"r", "Refresh session list"},
+		{"s", "Cycle sort order"},
+		{"/", "Search sessions"},
+		{"tab", "Toggle list/grid view"},
+	}
+	for _, e := range actionEntries {
+		lines = append(lines, m.formatHelpEntry(e.key, e.desc, styles))
+	}
 	lines = append(lines, "")
 
 	// Exit section
 	lines = append(lines, styles.HelpSection.Render("Exit:"))
-	lines = append(lines, "  q, ctrl+c        Quit")
-	lines = append(lines, "  esc              Close help/cancel search")
+	exitEntries := []helpEntry{
+		{"q, ctrl+c", "Quit"},
+		{"esc", "Close help/cancel search"},
+	}
+	for _, e := range exitEntries {
+		lines = append(lines, m.formatHelpEntry(e.key, e.desc, styles))
+	}
 	lines = append(lines, "")
 
-	// Legend section
+	// Status Legend section
 	lines = append(lines, styles.HelpSection.Render("Status Legend:"))
 	lines = append(lines, fmt.Sprintf("  %s  Active (processing)", styles.StatusActive.Render(IndicatorActive)))
 	lines = append(lines, fmt.Sprintf("  %s  Idle (waiting for input)", styles.StatusIdle.Render(IndicatorIdle)))
 	lines = append(lines, fmt.Sprintf("  %s  Exited (not running)", styles.StatusExited.Render("-")))
 	lines = append(lines, "")
 
+	// Current mode info
+	lines = append(lines, styles.HelpSection.Render("Current Mode:"))
+	lines = append(lines, fmt.Sprintf("  Layout: %s", m.layout.Name()))
+	uiModeStr := "Normal"
+	if m.uiMode == UIModeSidePanel {
+		uiModeStr = "Side Panel"
+	}
+	lines = append(lines, fmt.Sprintf("  UI Mode: %s", uiModeStr))
+	lines = append(lines, "")
+
+	// Close hint
 	lines = append(lines, styles.Help.Render("Press any key to close help"))
 
 	return strings.Join(lines, "\n")
+}
+
+// formatHelpEntry formats a single help entry with consistent spacing.
+func (m Model) formatHelpEntry(key, desc string, styles *Styles) string {
+	// Use a fixed width for the key column
+	const keyWidth = 22
+	paddedKey := key
+	if len(key) < keyWidth {
+		paddedKey = key + strings.Repeat(" ", keyWidth-len(key))
+	}
+
+	return "  " + styles.HelpKey.Render(paddedKey) + styles.HelpDesc.Render(desc)
 }
 
 // truncate shortens a string to maxLen characters, adding "..." if truncated.

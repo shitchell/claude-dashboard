@@ -9,6 +9,20 @@ import (
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
+// UIMode represents the overall UI mode (dashboard or side-panel).
+type UIMode int
+
+const (
+	// UIModeNormal is the standard full-screen dashboard mode.
+	UIModeNormal UIMode = iota
+
+	// UIModeSidePanel is a compact side-panel mode for narrower displays.
+	UIModeSidePanel
+)
+
+// SidePanelWidthThreshold is the width below which side-panel mode is used.
+const SidePanelWidthThreshold = 60
+
 // ViewMode represents the current UI mode.
 type ViewMode int
 
@@ -49,6 +63,21 @@ type Model struct {
 
 	// viewMode is the current UI mode (list, grid, help, search).
 	viewMode ViewMode
+
+	// uiMode is the overall UI mode (normal dashboard or side-panel).
+	// This is determined by window width.
+	uiMode UIMode
+
+	// layout is the current layout implementation for rendering sessions.
+	// This can be a ListLayout or GridLayout.
+	layout Layout
+
+	// layoutType tracks which layout type is currently active.
+	layoutType LayoutType
+
+	// styles contains the current visual styles.
+	// Styles are adjusted based on uiMode.
+	styles *Styles
 
 	// sortConfig specifies how sessions are sorted.
 	sortConfig session.SortConfig
@@ -125,10 +154,12 @@ func NewModel(cfg ModelConfig) Model {
 		refreshInterval = cfg.RefreshInterval
 	}
 
-	// Determine initial view mode from config
+	// Determine initial view mode and layout type from config
 	viewMode := ViewModeList
+	layoutType := LayoutTypeList
 	if cfg.Config != nil && cfg.Config.Mode == config.DisplayModeGrid {
 		viewMode = ViewModeGrid
+		layoutType = LayoutTypeGrid
 	}
 
 	// Get sort config from app config
@@ -146,12 +177,27 @@ func NewModel(cfg ModelConfig) Model {
 		filterConfig = cfg.Config.Filter.ToSessionFilterConfig()
 	}
 
+	// Initialize styles (normal mode by default)
+	styles := NewStyles()
+
+	// Initialize layout based on config
+	var layout Layout
+	if layoutType == LayoutTypeGrid {
+		layout = NewGridLayout(keys)
+	} else {
+		layout = NewListLayoutFromConfig(cfg.Config, keys)
+	}
+
 	return Model{
 		sessions:         nil,
 		filteredSessions: nil,
 		cursorIndex:      0,
 		cursorSessionID:  "",
 		viewMode:         viewMode,
+		uiMode:           UIModeNormal,
+		layout:           layout,
+		layoutType:       layoutType,
+		styles:           &styles,
 		sortConfig:       sortConfig,
 		filterConfig:     filterConfig,
 		searchQuery:      "",
@@ -301,4 +347,93 @@ func (m *Model) saveCursor() {
 	if m.cursorIndex >= 0 && m.cursorIndex < len(m.filteredSessions) {
 		m.cursorSessionID = m.filteredSessions[m.cursorIndex].ID
 	}
+}
+
+// updateUIMode updates the UI mode based on window width.
+// This switches between normal dashboard mode and side-panel mode.
+func (m *Model) updateUIMode() {
+	newMode := UIModeNormal
+	if m.windowWidth < SidePanelWidthThreshold {
+		newMode = UIModeSidePanel
+	}
+
+	// Only update if mode changed
+	if m.uiMode != newMode {
+		m.uiMode = newMode
+
+		// Update styles based on mode
+		if newMode == UIModeSidePanel {
+			styles := NewSidePanelStyles()
+			m.styles = &styles
+		} else {
+			styles := NewStyles()
+			m.styles = &styles
+		}
+	}
+}
+
+// switchLayout switches between list and grid layouts.
+// This is called when the user presses the toggle key.
+func (m *Model) switchLayout() {
+	if m.layoutType == LayoutTypeList {
+		m.layoutType = LayoutTypeGrid
+		m.layout = NewGridLayout(m.keys)
+		m.viewMode = ViewModeGrid
+	} else {
+		m.layoutType = LayoutTypeList
+		m.layout = NewListLayoutFromConfig(m.config, m.keys)
+		m.viewMode = ViewModeList
+	}
+}
+
+// SetLayout sets the layout to a specific type.
+func (m *Model) SetLayout(layoutType LayoutType) {
+	if m.layoutType == layoutType {
+		return // No change needed
+	}
+
+	m.layoutType = layoutType
+	if layoutType == LayoutTypeGrid {
+		m.layout = NewGridLayout(m.keys)
+		m.viewMode = ViewModeGrid
+	} else {
+		m.layout = NewListLayoutFromConfig(m.config, m.keys)
+		m.viewMode = ViewModeList
+	}
+}
+
+// GetLayout returns the current layout.
+func (m *Model) GetLayout() Layout {
+	return m.layout
+}
+
+// GetLayoutType returns the current layout type.
+func (m *Model) GetLayoutType() LayoutType {
+	return m.layoutType
+}
+
+// GetUIMode returns the current UI mode.
+func (m *Model) GetUIMode() UIMode {
+	return m.uiMode
+}
+
+// contentHeight returns the available height for the main content area.
+// This subtracts the header and footer heights from the total window height.
+func (m *Model) contentHeight() int {
+	// Header: 1 line
+	// Footer: 1 line
+	// We need space for separators too
+	const headerLines = 1
+	const footerLines = 1
+
+	available := m.windowHeight - headerLines - footerLines
+	if available < 1 {
+		available = 1
+	}
+	return available
+}
+
+// contentWidth returns the available width for the main content area.
+func (m *Model) contentWidth() int {
+	return m.windowWidth
 }
