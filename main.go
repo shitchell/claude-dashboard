@@ -3,292 +3,139 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
-	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/shitchell/claude-dashboard/internal/config"
+	"github.com/shitchell/claude-dashboard/internal/constants"
 	"github.com/shitchell/claude-dashboard/internal/session"
-	"github.com/shitchell/claude-dashboard/internal/tmux"
+	"github.com/shitchell/claude-dashboard/internal/ui"
+)
+
+// Exit codes for the application.
+const (
+	// ExitCodeSuccess indicates successful execution.
+	ExitCodeSuccess = 0
+
+	// ExitCodeConfigError indicates a configuration error.
+	ExitCodeConfigError = 1
+
+	// ExitCodeRuntimeError indicates a runtime error.
+	ExitCodeRuntimeError = 2
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+	exitCode := run(os.Args[1:])
+	if exitCode != ExitCodeSuccess {
+		os.Exit(exitCode)
 	}
 }
 
 // run is the main entry point, separated for testability.
-// This will be implemented in Phase 16: CLI & Main.
-func run() error {
-	// Parse command line flags for checkpoint verification
-	sortField := flag.String("sort", "modtime", "Sort field: modtime, name, messages, turns, summary")
-	sortAsc := flag.Bool("asc", false, "Sort in ascending order")
-	filterProject := flag.String("project", "", "Filter by project name/path")
-	filterAge := flag.Duration("age", 0, "Filter by max age (e.g., 24h, 7d)")
-
-	// Checkpoint 2: tmux integration flags
-	showTmux := flag.Bool("tmux", false, "Show tmux integration status (Checkpoint 2)")
-	showProcesses := flag.Bool("processes", false, "Show detected Claude processes")
-	showPanes := flag.Bool("panes", false, "Show all tmux panes")
-	gotoPane := flag.String("goto", "", "Navigate to a specific pane ID (e.g., %0)")
-	resumeSession := flag.String("resume", "", "Resume a session in a new pane by session ID")
-
-	flag.Parse()
-
-	// Handle Checkpoint 2 verification modes
-	if *showTmux || *showProcesses || *showPanes || *gotoPane != "" || *resumeSession != "" {
-		return runTmuxVerification(*showTmux, *showProcesses, *showPanes, *gotoPane, *resumeSession)
-	}
-
-	fmt.Println("claude-dashboard - Checkpoint 1: Core Data Pipeline Verification")
-	fmt.Println()
-
-	// Create the service
-	svc, err := session.NewService(nil)
+// It parses flags, loads configuration, and starts the TUI.
+// Returns an exit code.
+func run(args []string) int {
+	// Parse command line flags
+	flags, err := config.ParseFlags(args)
 	if err != nil {
-		return fmt.Errorf("failed to create service: %w", err)
+		// ParseFlags returns errors for unknown flags.
+		// The flag package prints the error, so we just exit.
+		return ExitCodeConfigError
 	}
 
-	// Load all sessions
-	startTime := time.Now()
-	sessions, err := svc.LoadAll()
+	// Handle --version flag
+	if flags.Version {
+		fmt.Printf("%s version %s\n", constants.AppName, constants.Version)
+		return ExitCodeSuccess
+	}
+
+	// Handle --help flag
+	// Note: The flag package already handles -h/--help by printing usage,
+	// but we set the Help flag for explicit handling if needed.
+	if flags.Help {
+		printUsage()
+		return ExitCodeSuccess
+	}
+
+	// Load configuration with priority: defaults <- file <- flags
+	cfg, err := config.Load(flags.ConfigPath, flags)
 	if err != nil {
-		return fmt.Errorf("failed to load sessions: %w", err)
-	}
-	loadDuration := time.Since(startTime)
-
-	fmt.Printf("Loaded %d sessions in %v\n", len(sessions), loadDuration)
-
-	// Apply filtering if specified
-	if *filterProject != "" || *filterAge > 0 {
-		filterCfg := session.FilterConfig{
-			Project: *filterProject,
-			MaxAge:  *filterAge,
-		}
-		sessions = session.ApplyFilters(sessions, filterCfg)
-		fmt.Printf("After filtering: %d sessions\n", len(sessions))
+		fmt.Fprintf(os.Stderr, "%s: config error: %v\n", constants.AppName, err)
+		return ExitCodeConfigError
 	}
 
-	// Apply sorting if specified (non-default)
-	if *sortField != "modtime" || *sortAsc {
-		sortCfg := session.SortConfig{
-			Ascending: *sortAsc,
-		}
-		switch *sortField {
-		case "name":
-			sortCfg.Field = session.SortByProjectName
-		case "messages":
-			sortCfg.Field = session.SortByMessageCount
-		case "turns":
-			sortCfg.Field = session.SortByTurnCount
-		case "summary":
-			sortCfg.Field = session.SortBySummary
-		default:
-			sortCfg.Field = session.SortByModTime
-		}
-		session.ApplySorting(sessions, sortCfg)
+	// Create the session service with configuration from app config
+	svcConfig := &session.ServiceConfig{
+		ProjectsDir: cfg.Sessions.ProjectsDir,
+		CacheDir:    cfg.Cache.Dir,
+	}
+	svc, err := session.NewService(svcConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: failed to create session service: %v\n", constants.AppName, err)
+		return ExitCodeRuntimeError
 	}
 
-	fmt.Println()
-	fmt.Println("Sessions:")
-	fmt.Println(string(make([]byte, 80)))
+	// Create the UI model
+	modelCfg := ui.ModelConfig{
+		Service: svc,
+		Config:  cfg,
+	}
+	if cfg.Refresh.Enabled {
+		modelCfg.RefreshInterval = cfg.Refresh.Interval
+	}
+	model := ui.NewModel(modelCfg)
 
-	// Print sessions
-	for i, s := range sessions {
-		// Truncate summary for display
-		summary := s.Summary
-		if len(summary) > 50 {
-			summary = summary[:47] + "..."
-		}
-
-		fmt.Printf("%d. [%s] %s\n", i+1, s.ID[:8], s.ProjectName)
-		fmt.Printf("   Summary: %s\n", summary)
-		fmt.Printf("   Model: %s | Messages: %d | Turns: %d | Modified: %s\n",
-			s.Model, s.MessageCount, s.TurnCount, s.ModTime.Format("2006-01-02 15:04:05"))
-		fmt.Printf("   Path: %s\n", s.FilePath)
-		fmt.Println()
+	// Create and run the bubbletea program
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: error: %v\n", constants.AppName, err)
+		return ExitCodeRuntimeError
 	}
 
-	return nil
+	return ExitCodeSuccess
 }
 
-// runTmuxVerification handles Checkpoint 2 tmux integration verification.
-func runTmuxVerification(showTmux, showProcesses, showPanes bool, gotoPane, resumeSession string) error {
-	fmt.Println("claude-dashboard - Checkpoint 2: tmux Integration Verification")
-	fmt.Println()
+// printUsage prints the help message.
+func printUsage() {
+	fmt.Printf(`%s - A TUI for browsing Claude Code sessions
 
-	// Check if we're running inside tmux
-	inTmux := tmux.InTmux()
-	fmt.Printf("Running inside tmux: %v\n", inTmux)
+Usage:
+  %s [options]
 
-	// Create navigator to check availability
-	nav := tmux.NewNavigator("")
-	navAvailable := nav.IsAvailable()
-	fmt.Printf("Navigation available: %v\n", navAvailable)
-	fmt.Printf("Claude CLI available: %v\n", tmux.IsClaudeAvailable())
-	fmt.Println()
+Options:
+  -c, --config PATH      Path to config file
+  -m, --mode MODE        Display mode: list or grid
+  -l, --layout LAYOUT    Layout type: list or grid
+      --columns COLS     Comma-separated column list
+      --refresh DURATION Refresh interval (e.g., 5s, 1m)
+      --no-refresh       Disable auto-refresh
+      --no-tmux          Disable tmux integration
+      --no-cache         Disable session caching
+      --sort FIELD       Sort by: modified, project, status, messages, turns, summary
+      --asc              Sort in ascending order
+  -p, --project NAME     Filter to project (matches path or name)
+      --max-age DURATION Filter by age (e.g., 24h, 7d)
+      --running          Show only running sessions (exclude exited)
+  -v, --version          Show version and exit
+  -h, --help             Show this help
 
-	// Handle navigation request
-	if gotoPane != "" {
-		fmt.Printf("Attempting to navigate to pane: %s\n", gotoPane)
-		if !navAvailable {
-			return fmt.Errorf("navigation not available (not in tmux or tmux not found)")
-		}
-		if err := nav.GoToPane(gotoPane); err != nil {
-			return fmt.Errorf("failed to navigate to pane: %w", err)
-		}
-		fmt.Println("Successfully navigated to pane")
-		return nil
-	}
+Configuration:
+  Config file is searched in: ~/.config/claude-dashboard/config.yaml
 
-	// Handle resume request
-	if resumeSession != "" {
-		fmt.Printf("Attempting to resume session in new pane: %s\n", resumeSession)
-		if !navAvailable {
-			return fmt.Errorf("navigation not available (not in tmux or tmux not found)")
-		}
-		if err := nav.ResumeInNewPane(resumeSession, ""); err != nil {
-			return fmt.Errorf("failed to resume session: %w", err)
-		}
-		fmt.Println("Successfully created new pane with resumed session")
-		return nil
-	}
-
-	// Create matcher and refresh state
-	matcher := tmux.NewMatcher()
-	if err := matcher.Refresh(); err != nil {
-		// If we're not in tmux, this is expected
-		if err == tmux.ErrNotInTmux {
-			fmt.Println("Note: Not running in tmux, pane discovery skipped")
-			fmt.Println("tmux integration is gracefully disabled when not in tmux")
-		} else {
-			fmt.Printf("Warning: Failed to refresh matcher state: %v\n", err)
-		}
-	}
-
-	// Show tmux status
-	if showTmux {
-		fmt.Println("=== tmux Integration Status ===")
-		fmt.Println()
-
-		panes := matcher.AllPanes()
-		fmt.Printf("Discovered panes: %d\n", len(panes))
-
-		claudeProcs := matcher.FindClaudeProcesses()
-		fmt.Printf("Claude processes: %d\n", len(claudeProcs))
-		fmt.Println()
-	}
-
-	// Show all panes
-	if showPanes {
-		fmt.Println("=== All tmux Panes ===")
-		fmt.Println()
-
-		panes := matcher.AllPanes()
-		if len(panes) == 0 {
-			if !inTmux {
-				fmt.Println("No panes discovered (not running in tmux)")
-			} else {
-				fmt.Println("No panes discovered")
-			}
-		} else {
-			for _, pane := range panes {
-				fmt.Printf("Pane %s: %s\n", pane.ID, pane.Description())
-				fmt.Printf("  TTY: %s\n", pane.TTY)
-			}
-		}
-		fmt.Println()
-	}
-
-	// Show detected Claude processes
-	if showProcesses {
-		fmt.Println("=== Detected Claude Processes ===")
-		fmt.Println()
-
-		procs := matcher.FindClaudeProcesses()
-		if len(procs) == 0 {
-			fmt.Println("No Claude processes detected")
-		} else {
-			for _, proc := range procs {
-				fmt.Printf("PID %d:\n", proc.PID)
-				fmt.Printf("  Command: %s\n", proc.Command)
-				fmt.Printf("  TTY: %s\n", proc.TTY)
-				if proc.SessionID != "" {
-					fmt.Printf("  Session ID: %s\n", proc.SessionID)
-				}
-				if proc.PaneID != "" {
-					fmt.Printf("  Pane ID: %s\n", proc.PaneID)
-				}
-				if proc.CWD != "" {
-					fmt.Printf("  CWD: %s\n", proc.CWD)
-				}
-				fmt.Println()
-			}
-		}
-	}
-
-	// If showing session status, load sessions and update their status
-	if showTmux {
-		fmt.Println("=== Session Status Integration ===")
-		fmt.Println()
-
-		// Load sessions
-		svc, err := session.NewService(nil)
-		if err != nil {
-			return fmt.Errorf("failed to create service: %w", err)
-		}
-
-		sessions, err := svc.LoadAll()
-		if err != nil {
-			return fmt.Errorf("failed to load sessions: %w", err)
-		}
-
-		// Create parser for status determination
-		parser := session.NewParser(nil)
-
-		// Update all session statuses
-		tmux.UpdateAllSessionStatuses(sessions, matcher, parser)
-
-		// Show sessions with their status
-		activeCount := 0
-		idleCount := 0
-		exitedCount := 0
-
-		for _, s := range sessions {
-			switch s.Status {
-			case session.StatusActive:
-				activeCount++
-			case session.StatusIdle:
-				idleCount++
-			case session.StatusExited:
-				exitedCount++
-			}
-		}
-
-		fmt.Printf("Total sessions: %d\n", len(sessions))
-		fmt.Printf("  Active: %d\n", activeCount)
-		fmt.Printf("  Idle: %d\n", idleCount)
-		fmt.Printf("  Exited: %d\n", exitedCount)
-		fmt.Println()
-
-		// Show a few sessions with their status
-		fmt.Println("Recent sessions with status:")
-		limit := 5
-		if len(sessions) < limit {
-			limit = len(sessions)
-		}
-		for i := 0; i < limit; i++ {
-			s := sessions[i]
-			statusStr := s.Status.String()
-			paneInfo := ""
-			if s.TmuxPane != "" {
-				paneInfo = fmt.Sprintf(" [pane %s]", s.TmuxPane)
-			}
-			fmt.Printf("  %s: %s - %s%s\n", s.ID[:8], statusStr, s.ProjectName, paneInfo)
-		}
-	}
-
-	return nil
+Examples:
+  %s                     # Start with defaults
+  %s -m grid             # Start in grid mode
+  %s --sort project      # Sort by project name
+  %s -p myproject        # Filter to sessions in myproject
+  %s --max-age 24h       # Show sessions from last 24 hours
+`,
+		constants.AppName,
+		constants.AppName,
+		constants.AppName,
+		constants.AppName,
+		constants.AppName,
+		constants.AppName,
+		constants.AppName,
+	)
 }

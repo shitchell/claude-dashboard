@@ -4,6 +4,16 @@ package constants
 
 import "time"
 
+// Application metadata.
+const (
+	// Version is the current application version.
+	// This is displayed with the --version flag.
+	Version = "0.1.0"
+
+	// AppName is the application name used in output and error messages.
+	AppName = "claude-dashboard"
+)
+
 // Parsing constants control how session data is parsed and displayed.
 const (
 	// MaxPreviewLength is the maximum number of characters to show
