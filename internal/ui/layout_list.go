@@ -21,15 +21,6 @@ const (
 
 	// ListItemHeight is the height of each list item (1 line).
 	ListItemHeight = 1
-
-	// ListSelectionPrefix is the prefix shown for selected items.
-	ListSelectionPrefix = "> "
-
-	// ListNormalPrefix is the prefix shown for non-selected items.
-	ListNormalPrefix = "  "
-
-	// ListPrefixWidth is the width of the selection prefix.
-	ListPrefixWidth = 2
 )
 
 // ListLayout displays sessions in a vertical list format.
@@ -99,10 +90,7 @@ func (l *ListLayout) Render(sessions []*session.Session, cursor int, width, heig
 	}
 
 	// Recalculate column widths if terminal width changed
-	contentWidth := width - ListPrefixWidth
-	if contentWidth < 0 {
-		contentWidth = 0
-	}
+	contentWidth := width
 	if l.lastWidth != contentWidth || len(l.widths) != len(l.columns) {
 		l.widths = CalculateWidths(l.columns, contentWidth)
 		l.lastWidth = contentWidth
@@ -247,30 +235,22 @@ func (l *ListLayout) renderEmpty(styles *Styles) string {
 
 // renderHeader renders the column header row.
 func (l *ListLayout) renderHeader(styles *Styles) string {
-	// Add prefix spacing to align with content
-	prefix := strings.Repeat(" ", ListPrefixWidth)
-
 	// Render the header using the column system
-	header := RenderHeader(l.columns, l.widths, styles)
-
-	return prefix + header
+	return RenderHeader(l.columns, l.widths, styles)
 }
 
 // renderRow renders a single session row.
 func (l *ListLayout) renderRow(sess *session.Session, selected bool, styles *Styles) string {
-	// Build the row content using the column system
-	content := RenderRow(sess, l.columns, l.widths, styles)
-
-	// Add selection prefix and styling
 	if selected {
-		prefix := styles.ItemSelected.Render(ListSelectionPrefix)
-		// Apply selection background to the entire row content
-		styledContent := styles.ItemSelected.Render(content)
-		return prefix + styledContent
+		// Render without per-column styles, then apply selection background
+		// Use raw ANSI codes to ensure background covers entire row
+		content := RenderRowPlain(sess, l.columns, l.widths)
+		// \x1b[48;5;240m = gray background, \x1b[1m = bold, \x1b[0m = reset
+		return "\x1b[48;5;240m\x1b[1m" + content + "\x1b[0m"
 	}
 
-	prefix := ListNormalPrefix
-	return prefix + content
+	// Normal rendering with per-column styles
+	return RenderRow(sess, l.columns, l.widths, styles)
 }
 
 // needsScrollIndicator returns true if a scroll indicator should be shown.
@@ -283,9 +263,6 @@ func (l *ListLayout) renderScrollIndicator(cursor, totalCount, visibleCount int,
 	// Calculate scroll position as percentage
 	position := cursor + 1
 	indicator := strings.Builder{}
-
-	// Add prefix spacing
-	indicator.WriteString(strings.Repeat(" ", ListPrefixWidth))
 
 	// Show position and total
 	posStr := strings.Builder{}

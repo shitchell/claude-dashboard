@@ -17,6 +17,9 @@ const (
 
 	// SearchBarLines is the number of lines used by the search bar.
 	SearchBarLines = 1
+
+	// headerFooterLines is the combined height of header and footer for pagination.
+	headerFooterLines = 4
 )
 
 // View renders the model to a string for display.

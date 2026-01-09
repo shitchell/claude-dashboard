@@ -303,6 +303,29 @@ func (m Model) refreshSessionsCmd() tea.Cmd {
 	}
 }
 
+// updateStatusCmd returns a command that updates session statuses via tmux.
+// This checks which sessions have running Claude processes and updates their status.
+func (m Model) updateStatusCmd(sessions []*session.Session) tea.Cmd {
+	return func() tea.Msg {
+		if m.matcher == nil {
+			logging.Debug("Skipping status update: no matcher")
+			return statusUpdatedMsg{Sessions: sessions, Error: nil}
+		}
+
+		// Get the parser from the service for status determination
+		var parser *session.Parser
+		if m.service != nil {
+			parser = m.service.GetParser()
+		}
+
+		// Update all session statuses
+		logging.Debug("Updating session statuses via tmux matcher")
+		tmux.UpdateAllSessionStatuses(sessions, m.matcher, parser)
+
+		return statusUpdatedMsg{Sessions: sessions, Error: nil}
+	}
+}
+
 // tickCmd returns a command that sends a tick after the refresh interval.
 // Returns nil if auto-refresh is disabled or the interval is zero.
 func (m Model) tickCmd() tea.Cmd {

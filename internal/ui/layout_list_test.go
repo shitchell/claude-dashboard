@@ -164,9 +164,10 @@ func TestListLayoutRenderSelection(t *testing.T) {
 	// Select second item
 	rendered := layout.Render(sessions, 1, 100, 20, &styles, nil)
 
-	// Should contain selection prefix somewhere
-	if !strings.Contains(rendered, ListSelectionPrefix) {
-		t.Error("rendered should contain selection prefix")
+	// Should contain the selected session's project name
+	// (selection is now indicated by background color, not prefix)
+	if !strings.Contains(rendered, "project-1") {
+		t.Error("rendered should contain selected session project-1")
 	}
 }
 

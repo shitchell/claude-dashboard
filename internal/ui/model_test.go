@@ -375,43 +375,6 @@ func TestTickCmd(t *testing.T) {
 	})
 }
 
-// TestPageSize verifies page size calculation.
-func TestPageSize(t *testing.T) {
-	tests := []struct {
-		name         string
-		windowHeight int
-		expected     int
-	}{
-		{
-			name:         "normal height",
-			windowHeight: 24,
-			expected:     24 - headerFooterLines,
-		},
-		{
-			name:         "small height",
-			windowHeight: 5,
-			expected:     1, // Minimum of 1
-		},
-		{
-			name:         "very small height",
-			windowHeight: 2,
-			expected:     1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := NewModel(ModelConfig{})
-			m.windowHeight = tt.windowHeight
-
-			result := m.pageSize()
-			if result != tt.expected {
-				t.Errorf("expected pageSize()=%d, got %d", tt.expected, result)
-			}
-		})
-	}
-}
-
 // TestIsLoading verifies the loading state accessor.
 func TestIsLoading(t *testing.T) {
 	m := NewModel(ModelConfig{})

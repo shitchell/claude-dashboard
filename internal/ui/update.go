@@ -84,8 +84,8 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) (tea.Model, tea.Cmd) 
 	m.applyFiltersAndSort()
 	m.restoreCursor()
 
-	// Trigger a background matcher refresh to enable fast navigation
-	return m, m.refreshMatcherCmd()
+	// Chain status update command to determine active/idle/exited status
+	return m, m.updateStatusCmd(m.sessions)
 }
 
 // handleSessionsRefreshed processes refresh results.
@@ -108,7 +108,8 @@ func (m Model) handleSessionsRefreshed(msg sessionsRefreshedMsg) (tea.Model, tea
 	m.applyFiltersAndSort()
 	m.restoreCursor()
 
-	return m, nil
+	// Chain status update command to determine active/idle/exited status
+	return m, m.updateStatusCmd(m.sessions)
 }
 
 // handleStatusUpdated processes status update results.
@@ -168,29 +169,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		logging.Debug("Quit key pressed")
 		return m, tea.Quit
 
-	// Navigation: Up
-	case key.Matches(msg, m.keys.Up):
-		return m.moveCursorUp()
-
-	// Navigation: Down
-	case key.Matches(msg, m.keys.Down):
-		return m.moveCursorDown()
-
-	// Navigation: Page Up
-	case key.Matches(msg, m.keys.PageUp):
-		return m.moveCursorPageUp()
-
-	// Navigation: Page Down
-	case key.Matches(msg, m.keys.PageDown):
-		return m.moveCursorPageDown()
-
-	// Navigation: Home
-	case key.Matches(msg, m.keys.Home):
-		return m.moveCursorToStart()
-
-	// Navigation: End
-	case key.Matches(msg, m.keys.End):
-		return m.moveCursorToEnd()
+	// Navigation keys - delegate to layout for proper handling (grid vs list)
+	case key.Matches(msg, m.keys.Up),
+		key.Matches(msg, m.keys.Down),
+		key.Matches(msg, m.keys.Left),
+		key.Matches(msg, m.keys.Right),
+		key.Matches(msg, m.keys.PageUp),
+		key.Matches(msg, m.keys.PageDown),
+		key.Matches(msg, m.keys.Home),
+		key.Matches(msg, m.keys.End):
+		return m.handleNavigation(msg)
 
 	// Select session
 	case key.Matches(msg, m.keys.Enter):
@@ -277,72 +265,21 @@ func (m Model) handleKeyPressInSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// moveCursorUp moves the cursor up one position.
-func (m Model) moveCursorUp() (tea.Model, tea.Cmd) {
-	if m.cursorIndex > 0 {
-		m.cursorIndex--
+// handleNavigation delegates navigation key handling to the current layout.
+// This allows grid and list layouts to handle navigation differently.
+func (m Model) handleNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.layout == nil {
+		return m, nil
+	}
+
+	sessionCount := len(m.filteredSessions)
+	newCursor, handled := m.layout.HandleKey(msg, sessionCount, m.cursorIndex)
+
+	if handled {
+		m.cursorIndex = newCursor
 		m.saveCursor()
 	}
-	return m, nil
-}
 
-// moveCursorDown moves the cursor down one position.
-func (m Model) moveCursorDown() (tea.Model, tea.Cmd) {
-	if m.cursorIndex < len(m.filteredSessions)-1 {
-		m.cursorIndex++
-		m.saveCursor()
-	}
-	return m, nil
-}
-
-// pageSize returns the number of items visible on one page.
-// This is calculated based on window height minus header/footer.
-const headerFooterLines = 4
-
-func (m Model) pageSize() int {
-	size := m.windowHeight - headerFooterLines
-	if size < 1 {
-		size = 1
-	}
-	return size
-}
-
-// moveCursorPageUp moves the cursor up one page.
-func (m Model) moveCursorPageUp() (tea.Model, tea.Cmd) {
-	m.cursorIndex -= m.pageSize()
-	if m.cursorIndex < 0 {
-		m.cursorIndex = 0
-	}
-	m.saveCursor()
-	return m, nil
-}
-
-// moveCursorPageDown moves the cursor down one page.
-func (m Model) moveCursorPageDown() (tea.Model, tea.Cmd) {
-	m.cursorIndex += m.pageSize()
-	if m.cursorIndex >= len(m.filteredSessions) {
-		m.cursorIndex = len(m.filteredSessions) - 1
-	}
-	if m.cursorIndex < 0 {
-		m.cursorIndex = 0
-	}
-	m.saveCursor()
-	return m, nil
-}
-
-// moveCursorToStart moves the cursor to the first item.
-func (m Model) moveCursorToStart() (tea.Model, tea.Cmd) {
-	m.cursorIndex = 0
-	m.saveCursor()
-	return m, nil
-}
-
-// moveCursorToEnd moves the cursor to the last item.
-func (m Model) moveCursorToEnd() (tea.Model, tea.Cmd) {
-	if len(m.filteredSessions) > 0 {
-		m.cursorIndex = len(m.filteredSessions) - 1
-	}
-	m.saveCursor()
 	return m, nil
 }
 

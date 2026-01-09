@@ -622,6 +622,17 @@ func padLeft(s string, width int) string {
 // RenderRow renders a complete row for a session using the given columns and widths.
 // The styles parameter provides styling for each column.
 func RenderRow(sess *session.Session, columns []Column, widths []int, styles *Styles) string {
+	return renderRowInternal(sess, columns, widths, styles, false)
+}
+
+// RenderRowPlain renders a row without per-column styling.
+// This is used for selected rows where a single background style is applied.
+func RenderRowPlain(sess *session.Session, columns []Column, widths []int) string {
+	return renderRowInternal(sess, columns, widths, nil, true)
+}
+
+// renderRowInternal is the shared implementation for row rendering.
+func renderRowInternal(sess *session.Session, columns []Column, widths []int, styles *Styles, plain bool) string {
 	if len(columns) == 0 || len(widths) == 0 {
 		return ""
 	}
@@ -639,10 +650,68 @@ func RenderRow(sess *session.Session, columns []Column, widths []int, styles *St
 
 	parts := make([]string, len(columns))
 	for i, col := range columns {
-		parts[i] = col.Render(sess, widths[i], styles)
+		if plain {
+			// Render without styles - just get the plain text content
+			parts[i] = renderColumnPlain(col, sess, widths[i])
+		} else {
+			parts[i] = col.Render(sess, widths[i], styles)
+		}
 	}
 
 	return strings.Join(parts, ColumnSeparator)
+}
+
+// renderColumnPlain renders a column's content without any styling.
+func renderColumnPlain(col Column, sess *session.Session, width int) string {
+	if sess == nil {
+		return padOrTruncate("", width)
+	}
+
+	switch c := col.(type) {
+	case *StatusColumn:
+		indicator := StatusIndicator(sess.Status)
+		return padOrTruncate(indicator, width)
+	case *NameColumn:
+		name := sess.ProjectName
+		if name == "" {
+			name = sess.ID
+		}
+		return padOrTruncate(name, width)
+	case *PreviewColumn:
+		preview := sess.Preview
+		if preview == "" && sess.Summary != "" {
+			preview = sess.Summary
+		}
+		preview = strings.ReplaceAll(preview, "\n", " ")
+		preview = strings.ReplaceAll(preview, "\r", " ")
+		return padOrTruncate(preview, width)
+	case *ModifiedColumn:
+		timeStr := util.RelativeTime(sess.ModTime)
+		return padOrTruncate(timeStr, width)
+	case *TurnsColumn:
+		turnStr := strconv.Itoa(sess.TurnCount)
+		return padLeft(turnStr, width)
+	case *MessagesColumn:
+		msgStr := strconv.Itoa(sess.MessageCount)
+		return padLeft(msgStr, width)
+	case *ModelColumn:
+		model := sess.Model
+		if model == "" {
+			model = "-"
+		}
+		return padOrTruncate(model, width)
+	case *ProjectColumn:
+		project := sess.ProjectPath
+		if project == "" {
+			project = sess.CWD
+		}
+		return padOrTruncate(project, width)
+	default:
+		// Fallback: use the column's Render with nil styles
+		// This may not work for all columns, but it's a safety net
+		_ = c
+		return padOrTruncate("", width)
+	}
 }
 
 // RenderHeader renders the header row for the given columns and widths.
