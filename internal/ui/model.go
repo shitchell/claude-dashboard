@@ -8,7 +8,17 @@ import (
 	"github.com/shitchell/claude-dashboard/internal/constants"
 	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
+	"github.com/shitchell/claude-dashboard/internal/tmux"
 )
+
+// NavigatorFactory creates PaneNavigator instances.
+// This allows injecting different navigator implementations for testing.
+type NavigatorFactory func(method string) tmux.PaneNavigator
+
+// DefaultNavigatorFactory creates real tmux Navigator instances.
+func DefaultNavigatorFactory(method string) tmux.PaneNavigator {
+	return tmux.NewNavigator(method)
+}
 
 // UIMode represents the overall UI mode (dashboard or side-panel).
 type UIMode int
@@ -124,6 +134,16 @@ type Model struct {
 	// ready indicates whether the model has finished initialization.
 	// This is set to true after receiving the first windowSizeMsg.
 	ready bool
+
+	// navigatorFactory creates PaneNavigator instances for navigation.
+	// If nil, DefaultNavigatorFactory is used.
+	navigatorFactory NavigatorFactory
+
+	// matcher provides cached session-to-pane matching.
+	// It is refreshed periodically along with sessions to keep
+	// process mappings up-to-date without requiring slow memory
+	// scans on every navigation attempt.
+	matcher *tmux.Matcher
 }
 
 // ModelConfig contains configuration options for creating a new Model.
@@ -143,6 +163,10 @@ type ModelConfig struct {
 	// RefreshInterval is the time between auto-refreshes.
 	// If zero, DefaultRefreshInterval is used.
 	RefreshInterval time.Duration
+
+	// NavigatorFactory creates PaneNavigator instances.
+	// If nil, DefaultNavigatorFactory is used.
+	NavigatorFactory NavigatorFactory
 }
 
 // NewModel creates a new Model with the given configuration.
@@ -157,6 +181,11 @@ func NewModel(cfg ModelConfig) Model {
 	refreshInterval := constants.DefaultRefreshInterval
 	if cfg.RefreshInterval > 0 {
 		refreshInterval = cfg.RefreshInterval
+	}
+
+	navigatorFactory := cfg.NavigatorFactory
+	if navigatorFactory == nil {
+		navigatorFactory = DefaultNavigatorFactory
 	}
 
 	// Determine initial view mode and layout type from config
@@ -193,6 +222,9 @@ func NewModel(cfg ModelConfig) Model {
 		layout = NewListLayoutFromConfig(cfg.Config, keys)
 	}
 
+	// Initialize the matcher for session-to-pane mapping
+	matcher := tmux.NewMatcher()
+
 	logging.Info("UI model initialized: layout=%s, refreshInterval=%v", layoutType, refreshInterval)
 	return Model{
 		sessions:         nil,
@@ -218,6 +250,8 @@ func NewModel(cfg ModelConfig) Model {
 		config:           cfg.Config,
 		keys:             keys,
 		ready:            false,
+		navigatorFactory: navigatorFactory,
+		matcher:          matcher,
 	}
 }
 
@@ -285,6 +319,38 @@ func (m Model) tickCmd() tea.Cmd {
 	return tea.Tick(m.refreshInterval, func(t time.Time) tea.Msg {
 		return refreshTickMsg(t)
 	})
+}
+
+// refreshMatcherCmd returns a command that refreshes the matcher in the background.
+// This updates the session-to-pane mapping for navigation.
+func (m Model) refreshMatcherCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.matcher == nil {
+			return matcherRefreshedMsg{Error: nil}
+		}
+
+		logging.Debug("Starting background matcher refresh...")
+
+		// Set session file paths for memory scanning
+		if m.service != nil {
+			paths := m.service.GetSessionFilePaths()
+			m.matcher.SetSessionFilePaths(paths)
+			logging.Debug("Set %d session paths for matcher", len(paths))
+		}
+
+		// Refresh the matcher (this does memory scanning)
+		if err := m.matcher.Refresh(); err != nil {
+			logging.Warn("Matcher refresh failed: %v", err)
+			return matcherRefreshedMsg{Error: err}
+		}
+
+		claudeProcs := m.matcher.FindClaudeProcesses()
+		pidToSession := m.matcher.GetPIDToSessionID()
+		logging.Info("Matcher refresh complete: %d Claude processes, %d session mappings",
+			len(claudeProcs), len(pidToSession))
+
+		return matcherRefreshedMsg{Error: nil}
+	}
 }
 
 // SelectedSession returns the currently selected session, or nil if none.

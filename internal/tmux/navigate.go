@@ -8,6 +8,21 @@ import (
 	"github.com/shitchell/claude-dashboard/internal/logging"
 )
 
+// PaneNavigator is an interface for navigating to tmux panes.
+// This allows for dependency injection in tests and enables
+// mocking navigation behavior without actually calling tmux.
+type PaneNavigator interface {
+	// GoToPane switches focus to the specified tmux pane.
+	// The paneID should be in tmux format (e.g., "%0", "%5").
+	GoToPane(paneID string) error
+
+	// IsAvailable returns true if tmux navigation is available.
+	IsAvailable() bool
+
+	// Method returns the navigation method being used.
+	Method() string
+}
+
 // Navigation method constants define how the Navigator switches to panes.
 const (
 	// NavigationMethodSelectPane uses tmux select-pane to switch directly.
@@ -19,7 +34,10 @@ const (
 	NavigationMethodSwitchClient = "switch-client"
 
 	// NavigationMethodDefault is the default navigation method.
-	NavigationMethodDefault = NavigationMethodSelectPane
+	// switch-client is the default because it works for both same-session
+	// and cross-session navigation. select-pane only works within the
+	// same tmux session.
+	NavigationMethodDefault = NavigationMethodSwitchClient
 )
 
 // Navigation error constants.
@@ -37,6 +55,9 @@ var (
 // ClaudeExecutable is the name of the Claude CLI executable.
 // This is used when resuming sessions in new panes.
 const ClaudeExecutable = "claude"
+
+// Ensure Navigator implements PaneNavigator interface at compile time.
+var _ PaneNavigator = (*Navigator)(nil)
 
 // Navigator handles navigation to tmux panes and creating new panes
 // for Claude sessions.
@@ -79,6 +100,9 @@ func NewNavigatorWithRunner(method string, runner CommandRunner) *Navigator {
 //   - select-pane: Direct pane selection within current session
 //   - switch-client: Client-level switch for cross-session navigation
 //
+// For switch-client, we find the client attached to the current session
+// and switch it to the target pane's session/window.
+//
 // Returns ErrNotInTmux if not running inside tmux,
 // ErrPaneNotFound if the pane doesn't exist,
 // or ErrNavigationFailed if the tmux command fails.
@@ -93,8 +117,17 @@ func (n *Navigator) GoToPane(paneID string) error {
 	var args []string
 	switch n.method {
 	case NavigationMethodSwitchClient:
-		// switch-client switches the entire client to the target pane's window
-		args = []string{"switch-client", "-t", paneID}
+		// switch-client switches a client to the target pane's session/window
+		// We need to find the client attached to the current session
+		client := n.findCurrentClient()
+		if client != "" {
+			logging.Debug("Found current client: %s", client)
+			args = []string{"switch-client", "-c", client, "-t", paneID}
+		} else {
+			// Fall back to basic switch-client without -c
+			logging.Debug("No client found, using basic switch-client")
+			args = []string{"switch-client", "-t", paneID}
+		}
 	default:
 		// select-pane is the default - switches focus to the target pane
 		args = []string{"select-pane", "-t", paneID}
@@ -129,6 +162,54 @@ func (n *Navigator) GoToPane(paneID string) error {
 
 	logging.Info("Successfully navigated to pane %s", paneID)
 	return nil
+}
+
+// findCurrentClient finds the tmux client attached to the current session.
+// Returns the client name (e.g., "/dev/pts/0") or empty string if not found.
+func (n *Navigator) findCurrentClient() string {
+	// First, get the current session name from our pane
+	var sessionOutput []byte
+	var err error
+	if n.runner != nil {
+		sessionOutput, err = runTmuxWithRunner(n.runner, "display-message", "-p", "#{session_name}")
+	} else {
+		sessionOutput, err = runTmux("display-message", "-p", "#{session_name}")
+	}
+	if err != nil {
+		logging.Debug("Failed to get current session name: %v", err)
+		return ""
+	}
+	currentSession := strings.TrimSpace(string(sessionOutput))
+	logging.Debug("Current session: %s", currentSession)
+
+	// Now list clients and find one attached to this session
+	var clientsOutput []byte
+	if n.runner != nil {
+		clientsOutput, err = runTmuxWithRunner(n.runner, "list-clients", "-F", "#{client_name} #{session_name}")
+	} else {
+		clientsOutput, err = runTmux("list-clients", "-F", "#{client_name} #{session_name}")
+	}
+	if err != nil {
+		logging.Debug("Failed to list clients: %v", err)
+		return ""
+	}
+
+	// Parse output to find a client attached to current session
+	lines := strings.Split(strings.TrimSpace(string(clientsOutput)), "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			clientName := parts[0]
+			sessionName := parts[1]
+			if sessionName == currentSession {
+				logging.Debug("Found client %s attached to session %s", clientName, sessionName)
+				return clientName
+			}
+		}
+	}
+
+	logging.Debug("No client found attached to session %s", currentSession)
+	return ""
 }
 
 // ResumeInNewPane creates a new tmux pane and starts a Claude session
@@ -225,13 +306,6 @@ func (n *Navigator) IsAvailable() bool {
 	}
 
 	return true
-}
-
-// IsClaudeAvailable checks whether the Claude CLI is available in PATH.
-// This is used to determine if session resume functionality is available.
-func IsClaudeAvailable() bool {
-	_, err := exec.LookPath(ClaudeExecutable)
-	return err == nil
 }
 
 // Method returns the navigation method being used by this Navigator.

@@ -63,6 +63,18 @@ type sessionSelectedMsg struct {
 	Session *session.Session
 }
 
+// navigationResultMsg is sent after attempting to navigate to a tmux pane.
+type navigationResultMsg struct {
+	// Session is the session we tried to navigate to.
+	Session *session.Session
+
+	// PaneID is the pane we navigated to, if successful.
+	PaneID string
+
+	// Error is non-nil if navigation failed.
+	Error error
+}
+
 // sortChangedMsg is sent when the sort order changes.
 type sortChangedMsg struct {
 	// Field is the new sort field.
@@ -89,3 +101,10 @@ type helpToggleMsg struct{}
 
 // quitMsg is sent when the application should quit.
 type quitMsg struct{}
+
+// matcherRefreshedMsg is sent when the tmux matcher has been refreshed.
+// This contains the mapping of sessions to panes for navigation.
+type matcherRefreshedMsg struct {
+	// Error is non-nil if the matcher refresh failed.
+	Error error
+}

@@ -298,3 +298,19 @@ func (s *Service) GetScanner() *Scanner {
 func (s *Service) GetParser() *Parser {
 	return s.parser
 }
+
+// GetSessionFilePaths returns all session file paths for memory scanning.
+// This scans the projects directory and returns the paths of all JSONL files.
+func (s *Service) GetSessionFilePaths() []string {
+	results, err := s.scanner.ScanMainSessionsOnly()
+	if err != nil {
+		logging.Warn("Failed to scan for session files: %v", err)
+		return nil
+	}
+
+	paths := make([]string, len(results))
+	for i, r := range results {
+		paths[i] = r.FilePath
+	}
+	return paths
+}

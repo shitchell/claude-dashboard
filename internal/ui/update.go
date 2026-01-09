@@ -5,6 +5,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
+	"github.com/shitchell/claude-dashboard/internal/tmux"
 )
 
 // Update handles messages and returns the updated model and any commands.
@@ -34,6 +35,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Error messages
 	case errorMsg:
 		return m.handleError(msg)
+
+	// Session selected (Enter key)
+	case sessionSelectedMsg:
+		return m.handleSessionSelected(msg)
+
+	// Navigation completed
+	case navigationResultMsg:
+		return m.handleNavigationResult(msg)
+
+	// Matcher refreshed
+	case matcherRefreshedMsg:
+		return m.handleMatcherRefreshed(msg)
 
 	// Key presses
 	case tea.KeyMsg:
@@ -71,7 +84,8 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) (tea.Model, tea.Cmd) 
 	m.applyFiltersAndSort()
 	m.restoreCursor()
 
-	return m, nil
+	// Trigger a background matcher refresh to enable fast navigation
+	return m, m.refreshMatcherCmd()
 }
 
 // handleSessionsRefreshed processes refresh results.
@@ -118,9 +132,11 @@ func (m Model) handleRefreshTick(_ refreshTickMsg) (tea.Model, tea.Cmd) {
 	m.refreshing = true
 
 	// Schedule the next tick and trigger a refresh
+	// Also refresh the matcher in the background for navigation
 	return m, tea.Batch(
 		m.tickCmd(),
 		m.refreshSessionsCmd(),
+		m.refreshMatcherCmd(),
 	)
 }
 
@@ -389,4 +405,168 @@ func (m Model) enterSearchMode() (tea.Model, tea.Cmd) {
 	m.viewMode = ViewModeSearch
 	m.searchQuery = ""
 	return m, nil
+}
+
+// handleSessionSelected handles the session selection message (Enter key).
+// It attempts to navigate to the tmux pane where the session is running.
+func (m Model) handleSessionSelected(msg sessionSelectedMsg) (tea.Model, tea.Cmd) {
+	if msg.Session == nil {
+		logging.Debug("handleSessionSelected: no session selected")
+		return m, nil
+	}
+
+	logging.Info("handleSessionSelected: Session=%s ID=%s TmuxPane='%s' CWD='%s' ProjectPath='%s'",
+		msg.Session.Summary, msg.Session.ID, msg.Session.TmuxPane, msg.Session.CWD, msg.Session.ProjectPath)
+
+	// If we already know the pane, navigate directly
+	if msg.Session.TmuxPane != "" {
+		logging.Debug("handleSessionSelected: TmuxPane already known, navigating directly to %s", msg.Session.TmuxPane)
+		return m, m.navigateToPane(msg.Session, msg.Session.TmuxPane)
+	}
+
+	// Otherwise, try to find the pane via memory scanning
+	logging.Debug("handleSessionSelected: TmuxPane empty, will try memory scanning")
+	return m, m.findAndNavigateToSession(msg.Session)
+}
+
+// handleNavigationResult handles the result of a navigation attempt.
+func (m Model) handleNavigationResult(msg navigationResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Error != nil {
+		logging.Warn("Navigation failed: %v", msg.Error)
+		// Could show an error to the user here
+		return m, nil
+	}
+
+	logging.Info("Successfully navigated to pane %s for session %s",
+		msg.PaneID, msg.Session.ID)
+	return m, nil
+}
+
+// handleMatcherRefreshed handles the result of a matcher refresh.
+func (m Model) handleMatcherRefreshed(msg matcherRefreshedMsg) (tea.Model, tea.Cmd) {
+	if msg.Error != nil {
+		logging.Warn("Matcher refresh failed: %v", msg.Error)
+		// Don't treat this as a fatal error - navigation can still work
+		// by falling back to on-demand scanning
+		return m, nil
+	}
+
+	logging.Debug("Matcher refresh completed successfully")
+	return m, nil
+}
+
+// navigateToPane returns a command that navigates to the specified pane.
+func (m Model) navigateToPane(sess *session.Session, paneID string) tea.Cmd {
+	return func() tea.Msg {
+		logging.Debug("Navigating to pane %s for session %s", paneID, sess.ID)
+
+		// Get navigation method from config
+		method := tmux.NavigationMethodDefault
+		if m.config != nil {
+			method = m.config.Tmux.NavigationMethod
+		}
+
+		// Use navigator factory to create navigator (enables testing with mocks)
+		navigator := m.navigatorFactory(method)
+		err := navigator.GoToPane(paneID)
+		return navigationResultMsg{
+			Session: sess,
+			PaneID:  paneID,
+			Error:   err,
+		}
+	}
+}
+
+// findAndNavigateToSession returns a command that finds the pane via the
+// cached matcher and navigates to it. This should be instant if the matcher
+// has been refreshed in the background.
+func (m Model) findAndNavigateToSession(sess *session.Session) tea.Cmd {
+	return func() tea.Msg {
+		logging.Info("findAndNavigateToSession: Starting for session %s (ID=%s)", sess.Summary, sess.ID)
+
+		// Try to use the cached matcher first (instant lookup)
+		if m.matcher != nil {
+			logging.Debug("findAndNavigateToSession: Using cached matcher")
+			pane := m.matcher.MatchSessionToPane(sess)
+			if pane != nil {
+				logging.Info("findAndNavigateToSession: Found pane %s via cached matcher, navigating...", pane.ID)
+
+				// Navigate to the pane
+				method := tmux.NavigationMethodDefault
+				if m.config != nil {
+					method = m.config.Tmux.NavigationMethod
+				}
+
+				navigator := m.navigatorFactory(method)
+				err := navigator.GoToPane(pane.ID)
+				if err != nil {
+					logging.Warn("findAndNavigateToSession: GoToPane failed: %v", err)
+				} else {
+					logging.Info("findAndNavigateToSession: Successfully navigated to pane %s", pane.ID)
+				}
+				return navigationResultMsg{
+					Session: sess,
+					PaneID:  pane.ID,
+					Error:   err,
+				}
+			}
+			logging.Debug("findAndNavigateToSession: Cached matcher found no pane, trying fresh scan")
+		}
+
+		// Fall back to a fresh matcher if cached one doesn't have the mapping
+		// This handles newly started Claude sessions that weren't in the last refresh
+		logging.Info("findAndNavigateToSession: Falling back to fresh matcher scan")
+		matcher := tmux.NewMatcher()
+
+		// Get session file paths for memory scanning
+		if m.service != nil {
+			paths := m.service.GetSessionFilePaths()
+			logging.Info("findAndNavigateToSession: Got %d session file paths from service", len(paths))
+			matcher.SetSessionFilePaths(paths)
+		} else {
+			logging.Warn("findAndNavigateToSession: No service available, cannot get session file paths")
+		}
+
+		// Refresh to discover processes and scan memory
+		logging.Debug("findAndNavigateToSession: Calling matcher.Refresh()")
+		if err := matcher.Refresh(); err != nil {
+			logging.Warn("findAndNavigateToSession: Matcher refresh failed: %v", err)
+			return navigationResultMsg{
+				Session: sess,
+				Error:   err,
+			}
+		}
+
+		// Try to find the pane
+		pane := matcher.MatchSessionToPane(sess)
+		if pane == nil {
+			logging.Info("findAndNavigateToSession: No pane found for session %s (ID=%s, CWD=%s, ProjectPath=%s)",
+				sess.Summary, sess.ID, sess.CWD, sess.ProjectPath)
+			return navigationResultMsg{
+				Session: sess,
+				Error:   nil, // Not an error, just no pane found
+			}
+		}
+
+		logging.Info("findAndNavigateToSession: Found pane %s via fresh scan, navigating...", pane.ID)
+
+		// Navigate to the pane
+		method := tmux.NavigationMethodDefault
+		if m.config != nil {
+			method = m.config.Tmux.NavigationMethod
+		}
+
+		navigator := m.navigatorFactory(method)
+		err := navigator.GoToPane(pane.ID)
+		if err != nil {
+			logging.Warn("findAndNavigateToSession: GoToPane failed: %v", err)
+		} else {
+			logging.Info("findAndNavigateToSession: Successfully navigated to pane %s", pane.ID)
+		}
+		return navigationResultMsg{
+			Session: sess,
+			PaneID:  pane.ID,
+			Error:   err,
+		}
+	}
 }
