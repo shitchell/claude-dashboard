@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","uuid":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","timestamp":"2025-12-27T10:00:00.000Z","sessionId":"minimal-session-id","model":"claude-sonnet-4-20250514","claude_code_version":"2.0.76","cwd":"/home/user/minimal-project"}
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2025-12-27T10:00:01.000Z","sessionId":"minimal-session-id","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2025-12-27T10:00:02.000Z","sessionId":"minimal-session-id","message":{"role":"assistant","content":[{"type":"text","text":"Hello! How can I help?"}]}}
+{"type":"summary","summary":"Simple greeting conversation","leafUuid":"a1"}

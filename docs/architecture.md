@@ -876,13 +876,73 @@ Model.Update(SessionSelectedMsg)
 
 ---
 
-## Testing Approach
+## Testing Infrastructure
+
+### Test Packages
+
+#### `test/helpers/` - Shared Test Utilities
+
+**Purpose**: Reusable test fixtures, assertions, and mocks
+
+**Key Components**:
+
+- **SessionBuilder**: Fluent API for creating test sessions
+  - `WithID()`, `WithModel()`, `WithProject()`, `WithSummary()`, etc.
+  - `Build()` returns configured `*session.Session`
+
+- **JSONLEntryBuilder**: Fluent API for creating JSONL test data
+  - `AddInit()`, `AddUserMessage()`, `AddAssistantMessage()`, `AddSummary()`, `AddResult()`
+  - `Build()` returns JSONL string, `WriteToFile()` writes to path
+
+- **MockTmuxRunner**: Mock implementation of tmux command runner
+  - `SetResponse()` configures command responses
+  - `GetCallCount()`, `GetLastCall()` for verification
+  - `Reset()` clears state between tests
+
+- **TmuxTestSession**: Helper for real tmux integration tests
+  - `SendKeys()`, `CapturePane()`, `WaitForContent()`
+  - Automatic cleanup on test completion
+
+- **Custom Assertions**: `AssertEqual()`, `AssertContains()`, `AssertSessionsEqual()`, etc.
+
+#### `test/e2e/` - End-to-End Tests
+
+**Purpose**: Test full application with real tmux and Claude sessions
+
+**Key Components**:
+
+- **TestHarness**: E2E test orchestrator using gotmux library
+  - `CreateSession()`: Creates isolated tmux session
+  - `RunDashboard()`: Launches dashboard binary in test pane
+  - `WaitForContent()`: Polls pane output for expected content
+  - `SendKeys()`: Simulates keyboard input
+  - `Cleanup()`: Tears down test resources
+
+- **E2E Tests**: `navigation_test.go`
+  - `TestDashboardStartup`: Verifies dashboard launches
+  - `TestBasicNavigation`: Tests j/k cursor movement
+  - `TestSearchMode`: Tests `/` search activation
+  - `TestQuitCommand`: Tests clean exit with `q`
+  - `TestHelpDisplay`: Tests `?` help screen
+
+**Gating**: E2E tests require `CLAUDE_E2E_TESTS=1` environment variable
+
+#### `testdata/` - Test Fixtures
+
+- `testdata/sessions/`: JSONL session fixtures
+  - `minimal.jsonl`: Minimal valid session
+  - `full.jsonl`: Complete session with all message types
+  - `multimodel.jsonl`: Session demonstrating model switching
+
+### Testing Approach
 
 The codebase includes test files for most packages with:
 - Unit tests for core logic (filtering, sorting, parsing)
 - Mock implementations for dependencies (Runner, Scanner, etc.)
 - Table-driven tests for comprehensive coverage
 - Integration tests for service operations
+- Component tests using bubbletea's teatest framework
+- E2E tests with real tmux sessions (opt-in)
 
 ---
 

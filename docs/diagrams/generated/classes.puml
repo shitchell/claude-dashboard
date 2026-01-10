@@ -1001,6 +1001,98 @@ namespace ui {
 }
 namespace util {
 }
+namespace e2e {
+    class "TestHarness" << (S,Aquamarine) >> {
+        - t *testing.T
+        - tmux *gotmux.Tmux
+        - session *gotmux.Session
+        - testDir string
+        - binaryPath string
+        - cleanupFuncs []<font color=blue>func</font>() 
+
+        - addCleanup(f <font color=blue>func</font>() ) 
+
+        + CreateSession(name string) *gotmux.Session
+        + GetSession() *gotmux.Session
+        + GetTestDir() string
+        + SetBinaryPath(path string) 
+        + GetBinaryPath() string
+        + CreateTestProjectsDir() string
+        + CreateTestSession(projectsDir string, projectPath string, sessionID string, model string, summary string) string
+        + RunDashboard(projectsDir string, args ...string) *gotmux.Pane
+        + WaitForContent(pane *gotmux.Pane, content string, timeout time.Duration) bool
+        + SendKeys(pane *gotmux.Pane, keys string) error
+        + SendKeysEnter(pane *gotmux.Pane, keys string) error
+        + CapturePane(pane *gotmux.Pane) string
+        + Cleanup() 
+
+    }
+}
+namespace helpers {
+    class "JSONLEntryBuilder" << (S,Aquamarine) >> {
+        - entries []<font color=blue>map</font>[string]<font color=blue>interface</font>{}
+
+        + AddInit(sessionID string, model string, cwd string) *JSONLEntryBuilder
+        + AddUserMessage(uuid string, parentUuid string, content string) *JSONLEntryBuilder
+        + AddAssistantMessage(uuid string, parentUuid string, model string, content string) *JSONLEntryBuilder
+        + AddSummary(summary string, leafUuid string) *JSONLEntryBuilder
+        + AddResult(success bool, cost float64) *JSONLEntryBuilder
+        + Build() string
+        + WriteToFile(t *testing.T, path string) 
+
+    }
+    class "MockResponse" << (S,Aquamarine) >> {
+        + Output []byte
+        + Error error
+
+    }
+    class "MockTmuxRunner" << (S,Aquamarine) >> {
+        + Calls [][]string
+        + Responses <font color=blue>map</font>[string]MockResponse
+        + Default MockResponse
+
+        + Run(args ...string) ([]byte, error)
+        + SetResponse(command string, output []byte, err error) 
+        + SetDefaultResponse(output []byte, err error) 
+        + GetCallCount() int
+        + GetLastCall() []string
+        + Reset() 
+
+    }
+    class "SessionBuilder" << (S,Aquamarine) >> {
+        - session *session.Session
+
+        + WithID(id string) *SessionBuilder
+        + WithModel(model string) *SessionBuilder
+        + WithProject(name string, path string) *SessionBuilder
+        + WithSummary(summary string) *SessionBuilder
+        + WithTmuxPane(paneID string) *SessionBuilder
+        + WithModTime(t time.Time) *SessionBuilder
+        + WithMessageCount(count int) *SessionBuilder
+        + WithTurnCount(count int) *SessionBuilder
+        + Build() *session.Session
+
+    }
+    class "TmuxTestSession" << (S,Aquamarine) >> {
+        - t *testing.T
+        - cleanupFunc <font color=blue>func</font>() 
+
+        + Name string
+        + WindowID string
+        + PaneID string
+        + StartDir string
+
+        + Kill() 
+        + SendKeys(keys string) error
+        + SendKeysEnter(keys string) error
+        + CapturePane() (string, error)
+        + WaitForContent(content string, timeout time.Duration) bool
+        + CreateNewPane() (string, error)
+        + RunCommand(command string) error
+        + GetPaneProcesses() ([]string, error)
+
+    }
+}
 namespace cmd {
     namespace debug-matcher {
     }
