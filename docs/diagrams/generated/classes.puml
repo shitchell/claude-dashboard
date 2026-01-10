@@ -1,0 +1,1033 @@
+@startuml
+namespace claude-dashboard {
+}
+namespace config {
+    class "CacheConfig" << (S,Aquamarine) >> {
+        + Enabled bool
+        + Dir string
+        + Filename string
+
+    }
+    class "ColumnType" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "ColumnWidths" << (S,Aquamarine) >> {
+        + Name int
+        + Preview int
+        + Modified int
+        + Status int
+        + Project int
+        + Messages int
+        + Turns int
+        + Model int
+
+    }
+    class "Config" << (S,Aquamarine) >> {
+        + Mode DisplayMode
+        + ModeString string
+        + Layout LayoutType
+        + LayoutString string
+        + Columns []ColumnType
+        + ColumnsStrings []string
+        + Widths ColumnWidths
+        + SidePanel SidePanelConfig
+        + Grid GridConfig
+        + Indicators IndicatorConfig
+        + Sort SortConfig
+        + Filter FilterConfig
+        + Tmux TmuxConfig
+        + Cache CacheConfig
+        + Refresh RefreshConfig
+        + Sessions SessionsConfig
+
+        - syncFromStrings() 
+        - syncToStrings() 
+
+    }
+    class "DisplayMode" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "FilterConfig" << (S,Aquamarine) >> {
+        + MaxAge string
+        + MinAge string
+        + Project string
+        + ExcludeExited bool
+        + SearchText string
+        + Model string
+
+        + ToSessionFilterConfig() session.FilterConfig
+
+    }
+    class "Flags" << (S,Aquamarine) >> {
+        + ConfigPath string
+        + Mode *string
+        + Layout *string
+        + Columns *string
+        + RefreshInterval *time.Duration
+        + RefreshEnabled *bool
+        + TmuxEnabled *bool
+        + CacheEnabled *bool
+        + SortField *string
+        + SortAscending *bool
+        + Project *string
+        + MaxAge *string
+        + ExcludeExited *bool
+        + Version bool
+        + Help bool
+
+        + Apply(cfg *Config) 
+        + IsEmpty() bool
+        + HasConfigPath() bool
+
+    }
+    class "GridConfig" << (S,Aquamarine) >> {
+        + CardWidth int
+        + CardHeight int
+        + Gap int
+
+    }
+    class "IndicatorConfig" << (S,Aquamarine) >> {
+        + Active string
+        + Idle string
+        + Exited string
+
+    }
+    class "LayoutType" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "RefreshConfig" << (S,Aquamarine) >> {
+        + Enabled bool
+        + Interval time.Duration
+        + IntervalSeconds int
+
+    }
+    class "SessionsConfig" << (S,Aquamarine) >> {
+        + ProjectsDir string
+        + MaxNameLength int
+        + MaxPreviewLength int
+
+    }
+    class "SidePanelConfig" << (S,Aquamarine) >> {
+        + Enabled bool
+        + MinWidth int
+        + Width int
+
+    }
+    class "SortConfig" << (S,Aquamarine) >> {
+        + Field string
+        + Ascending bool
+
+        + ToSessionSortConfig() session.SortConfig
+
+    }
+    class "TmuxConfig" << (S,Aquamarine) >> {
+        + Enabled bool
+        + HighlightRunning bool
+        + NavigationMethod string
+
+    }
+    class "ValidationError" << (S,Aquamarine) >> {
+        + Field string
+        + Err error
+
+        + Error() string
+        + Unwrap() error
+
+    }
+    class "claude-dashboard.internal.config.ColumnType" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.config.DisplayMode" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.config.LayoutType" << (T, #FF7700) >>  {
+    }
+}
+namespace constants {
+}
+namespace logging {
+    class "Config" << (S,Aquamarine) >> {
+        + LogDir string
+        + LogFileName string
+        + Level Level
+        + Enabled bool
+
+    }
+    class "Level" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "Logger" << (S,Aquamarine) >> {
+        - file *os.File
+        - logger *log.Logger
+        - level Level
+        - mu sync.Mutex
+        - enabled bool
+
+        - log(level Level, format string, args ...<font color=blue>interface</font>{}) 
+
+        + Close() error
+        + SetLevel(level Level) 
+        + Debug(format string, args ...<font color=blue>interface</font>{}) 
+        + Info(format string, args ...<font color=blue>interface</font>{}) 
+        + Warn(format string, args ...<font color=blue>interface</font>{}) 
+        + Error(format string, args ...<font color=blue>interface</font>{}) 
+        + Writer(level Level) io.Writer
+
+    }
+    class "claude-dashboard.internal.logging.Level" << (T, #FF7700) >>  {
+    }
+    class "levelWriter" << (S,Aquamarine) >> {
+        - logger *Logger
+        - level Level
+
+        + Write(p []byte) (int, error)
+
+    }
+}
+namespace session {
+    class "AssistantLine" << (S,Aquamarine) >> {
+        + RequestID string
+        + Slug string
+        + Message AssistantMessage
+
+    }
+    class "AssistantMessage" << (S,Aquamarine) >> {
+        + ID string
+        + Type string
+        + Model string
+        + Role string
+        + Content []ContentBlock
+        + StopReason *string
+        + StopSequence *string
+        + Usage *TokenUsage
+
+    }
+    class "BaseLine" << (S,Aquamarine) >> {
+        + Type MessageType
+        + UUID string
+        + ParentUUID *string
+        + Timestamp string
+        + SessionID string
+        + Version string
+        + CWD string
+        + GitBranch string
+        + IsSidechain bool
+        + UserType string
+
+    }
+    class "Cache" << (S,Aquamarine) >> {
+        - path string
+        - version int
+        - entries <font color=blue>map</font>[string]CacheEntry
+        - mu sync.RWMutex
+        - dirty bool
+
+        + Load() error
+        + Save() error
+        + Get(path string, mtime time.Time) *SessionMetadata
+        + Set(path string, mtime time.Time, meta *SessionMetadata) 
+        + Prune(validPaths <font color=blue>map</font>[string]<font color=blue>struct</font>{}) 
+        + IsDirty() bool
+        + Size() int
+        + Path() string
+
+    }
+    class "CacheCreation" << (S,Aquamarine) >> {
+        + Ephemeral5mInputTokens int
+        + Ephemeral1hInputTokens int
+
+    }
+    class "CacheEntry" << (S,Aquamarine) >> {
+        + Mtime int64
+        + Metadata SessionMetadata
+
+    }
+    class "CacheFile" << (S,Aquamarine) >> {
+        + Version int
+        + Entries <font color=blue>map</font>[string]CacheEntry
+
+    }
+    class "CompactMetadata" << (S,Aquamarine) >> {
+        + PreTokens int
+        + PostTokens int
+
+    }
+    class "ContentBlock" << (S,Aquamarine) >> {
+        + Type string
+        + Text string
+        + Thinking string
+        + Signature string
+        + ID string
+        + Name string
+        + Input json.RawMessage
+        + ToolUseID string
+        + Content string
+        + IsError bool
+
+    }
+    class "FileHistorySnapshotDetail" << (S,Aquamarine) >> {
+        + MessageID string
+        + Timestamp string
+        + TrackedFileBackups <font color=blue>map</font>[string]TrackedFileBackup
+
+    }
+    class "FileHistorySnapshotLine" << (S,Aquamarine) >> {
+        + Type MessageType
+        + MessageID string
+        + IsSnapshotUpdate bool
+        + Snapshot FileHistorySnapshotDetail
+
+    }
+    class "FilterConfig" << (S,Aquamarine) >> {
+        + MaxAge time.Duration
+        + MinAge time.Duration
+        + Project string
+        + Status *Status
+        + ExcludeExited bool
+        + SearchText string
+        + Model string
+
+    }
+    class "GenericLine" << (S,Aquamarine) >> {
+        + Type MessageType
+        + Subtype string
+
+    }
+    class "LastEntry" << (S,Aquamarine) >> {
+        + Type MessageType
+        + Subtype string
+        + Timestamp time.Time
+        + Preview string
+        + IsToolResult bool
+        + IsComplete bool
+
+    }
+    class "Parser" << (S,Aquamarine) >> {
+        - config ParserConfig
+
+        - readLastLine(file *os.File, size int64) ([]byte, error)
+
+        + Parse(path string) (*SessionMetadata, error)
+        + ParseLastEntry(path string) (*LastEntry, error)
+
+    }
+    class "ParserConfig" << (S,Aquamarine) >> {
+        + MaxScanBytes int64
+        + BufferSize int
+
+    }
+    class "QueueOperationLine" << (S,Aquamarine) >> {
+        + Operation string
+        + Content string
+
+    }
+    class "ResultLine" << (S,Aquamarine) >> {
+        + Subtype ResultSubtype
+        + TotalCostUSD float64
+        + DurationMs int64
+        + NumTurns int
+        + Usage *ResultUsage
+
+    }
+    class "ResultUsage" << (S,Aquamarine) >> {
+        + InputTokens int
+        + OutputTokens int
+        + CacheReadInputTokens int
+
+    }
+    class "ScanResult" << (S,Aquamarine) >> {
+        + FilePath string
+        + ProjectDir string
+        + SessionID string
+        + IsSubAgent bool
+        + AgentID string
+        + ModTime int64
+
+    }
+    class "Scanner" << (S,Aquamarine) >> {
+        + ProjectsDir string
+
+        + Scan() ([]ScanResult, error)
+        + ScanMainSessionsOnly() ([]ScanResult, error)
+
+    }
+    class "Service" << (S,Aquamarine) >> {
+        - scanner *Scanner
+        - parser *Parser
+        - cache *Cache
+        - projectsDir string
+        - cacheDir string
+
+        - processResult(result ScanResult) (*Session, error)
+
+        + LoadAll() ([]*Session, error)
+        + Refresh(existing []*Session) ([]*Session, error)
+        + GetCache() *Cache
+        + GetScanner() *Scanner
+        + GetParser() *Parser
+        + GetSessionFilePaths() []string
+
+    }
+    class "ServiceConfig" << (S,Aquamarine) >> {
+        + ProjectsDir string
+        + CacheDir string
+        + ParserConfig *ParserConfig
+
+    }
+    class "Session" << (S,Aquamarine) >> {
+        + ID string
+        + FilePath string
+        + ProjectPath string
+        + ProjectName string
+        + CWD string
+        + Summary string
+        + Model string
+        + Preview string
+        + MessageCount int
+        + TurnCount int
+        + ModTime time.Time
+        + Status Status
+        + TmuxPane string
+
+        + ToMetadata() SessionMetadata
+
+    }
+    class "SessionMetadata" << (S,Aquamarine) >> {
+        + ID string
+        + FilePath string
+        + ProjectPath string
+        + ProjectName string
+        + CWD string
+        + Summary string
+        + Model string
+        + Preview string
+        + MessageCount int
+        + TurnCount int
+        + ModTime time.Time
+
+    }
+    class "SortConfig" << (S,Aquamarine) >> {
+        + Field SortField
+        + Ascending bool
+
+    }
+    class "Status" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "SummaryLine" << (S,Aquamarine) >> {
+        + Type MessageType
+        + Summary string
+        + LeafUUID string
+
+    }
+    class "SystemLine" << (S,Aquamarine) >> {
+        + Subtype SystemSubtype
+        + Model string
+        + ClaudeCodeVersion string
+        + Content string
+        + CompactMetadata *CompactMetadata
+        + DurationMs int64
+
+    }
+    class "ThinkingMetadata" << (S,Aquamarine) >> {
+        + Level string
+        + Disabled bool
+        + Triggers []string
+
+    }
+    class "TokenUsage" << (S,Aquamarine) >> {
+        + InputTokens int
+        + OutputTokens int
+        + CacheCreationInputTokens int
+        + CacheReadInputTokens int
+        + CacheCreation *CacheCreation
+        + ServiceTier string
+
+    }
+    class "ToolUseResult" << (S,Aquamarine) >> {
+        + Type string
+        + FilePath string
+        + Content string
+        + StructuredPatch []<font color=blue>interface</font>{}
+        + OriginalFile *string
+        + Stdout string
+        + Stderr string
+        + Interrupted bool
+        + IsImage bool
+        + AgentID string
+        + TotalTokens int
+        + AgentContent []<font color=blue>interface</font>{}
+
+    }
+    class "TrackedFileBackup" << (S,Aquamarine) >> {
+        + BackupFileName *string
+        + Version int
+        + BackupTime string
+
+    }
+    class "UserLine" << (S,Aquamarine) >> {
+        + Message UserMessage
+        + ThinkingMetadata *ThinkingMetadata
+        + Todos []<font color=blue>interface</font>{}
+        + ToolUseResult *ToolUseResult
+        + Slug string
+        + IsMeta bool
+        + AgentID string
+
+    }
+    class "UserMessage" << (S,Aquamarine) >> {
+        + Role string
+        + Content json.RawMessage
+
+        + GetTextContent() string
+
+    }
+    class "claude-dashboard.internal.session.ContentBlockType" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.session.MessageType" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.session.ResultSubtype" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.session.SortField" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.session.Status" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.session.SystemSubtype" << (T, #FF7700) >>  {
+    }
+}
+namespace tmux {
+    class "ClaudeProcess" << (S,Aquamarine) >> {
+        + SessionID string
+        + PaneID string
+
+        + String() string
+
+    }
+    interface "CommandRunner"  {
+        + Run(args ...string) ([]byte, error)
+
+    }
+    class "Matcher" << (S,Aquamarine) >> {
+        - mu sync.RWMutex
+        - paneMap *PaneMap
+        - processList *ProcessList
+        - claudeProcesses []ClaudeProcess
+        - sessionToPaneID <font color=blue>map</font>[string]string
+        - pidToSessionID <font color=blue>map</font>[int]string
+        - cwdToPanes <font color=blue>map</font>[string][]string
+        - sessionFilePaths []string
+        - processRunner ProcessRunner
+        - tmuxRunner CommandRunner
+        - memoryScanner MemoryScannerInterface
+
+        - findAndMatchClaudeProcesses() 
+        - scanAndMatchSessions(pids []int) 
+
+        + SetMemoryScanner(scanner MemoryScannerInterface) 
+        + SetSessionFilePaths(paths []string) 
+        + Refresh() error
+        + FindClaudeProcesses() []ClaudeProcess
+        + MatchSessionToPane(sess *session.Session) *Pane
+        + HasRunningProcess(sess *session.Session) bool
+        + GetPaneByID(id string) *Pane
+        + AllPanes() []*Pane
+        + GetCWDToPanes() <font color=blue>map</font>[string][]string
+        + GetPIDToSessionID() <font color=blue>map</font>[int]string
+        + FindProcessBySessionID(sessionID string) *ClaudeProcess
+        + FindProcessesByCWD(cwd string) []ClaudeProcess
+
+    }
+    class "MemoryRegion" << (S,Aquamarine) >> {
+        + Start uint64
+        + End uint64
+        + Perms string
+        + Path string
+
+    }
+    class "MemoryScanner" << (S,Aquamarine) >> {
+        - pid int
+
+        - readMemoryMaps() ([]MemoryRegion, error)
+        - scanRegion(memFile *os.File, region MemoryRegion, patterns [][]byte) (<font color=blue>map</font>[string]int, error)
+
+        + ScanForPatterns(patterns [][]byte) <font color=blue>map</font>[string]int
+
+    }
+    interface "MemoryScannerInterface"  {
+        + MatchPIDToSession(pid int, sessionPatterns <font color=blue>map</font>[string][]byte) (string, int)
+
+    }
+    class "Navigator" << (S,Aquamarine) >> {
+        - method string
+        - runner CommandRunner
+
+        - findCurrentClient() string
+
+        + GoToPane(paneID string) error
+        + ResumeInNewPane(sessionID string, cwd string) error
+        + BuildGoToPaneCommand(paneID string) []string
+        + BuildResumeCommand(sessionID string, cwd string) []string
+        + IsAvailable() bool
+        + Method() string
+
+    }
+    class "Pane" << (S,Aquamarine) >> {
+        + TTY string
+        + ID string
+        + SessionName string
+        + WindowIndex string
+        + WindowName string
+        + PaneIndex string
+        + PaneTitle string
+
+        + Description() string
+
+    }
+    class "PaneMap" << (S,Aquamarine) >> {
+        - mu sync.RWMutex
+        - byTTY <font color=blue>map</font>[string]*Pane
+        - byID <font color=blue>map</font>[string]*Pane
+        - runner CommandRunner
+
+        - parseOutput(output []byte) error
+
+        + Discover() error
+        + GetByTTY(tty string) *Pane
+        + GetByID(id string) *Pane
+        + All() []*Pane
+        + Count() int
+
+    }
+    interface "PaneNavigator"  {
+        + GoToPane(paneID string) error
+        + IsAvailable() bool
+        + Method() string
+
+    }
+    class "Process" << (S,Aquamarine) >> {
+        + PID int
+        + TTY string
+        + Command string
+        + CWD string
+
+    }
+    class "ProcessList" << (S,Aquamarine) >> {
+        - mu sync.RWMutex
+        - processes []Process
+        - byTTY <font color=blue>map</font>[string][]Process
+        - runner ProcessRunner
+
+        - parseOutput(output []byte) error
+
+        + Discover() error
+        + GetByTTY(tty string) []Process
+        + All() []Process
+        + Count() int
+        + PopulateCWD() 
+
+    }
+    interface "ProcessRunner"  {
+        + ListProcesses() ([]byte, error)
+        + ReadCWD(pid int) (string, error)
+
+    }
+    class "defaultProcessRunner" << (S,Aquamarine) >> {
+        + ListProcesses() ([]byte, error)
+        + ReadCWD(pid int) (string, error)
+
+    }
+    class "defaultRunner" << (S,Aquamarine) >> {
+        + Run(args ...string) ([]byte, error)
+
+    }
+}
+namespace ui {
+    interface "Column"  {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(session *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "GridLayout" << (S,Aquamarine) >> {
+        - scrollOffset int
+        - lastWidth int
+        - cachedColumns int
+        - cachedCellWidth int
+        - keys KeyMap
+
+        - calculateGridDimensions(width int) (int, int)
+        - renderRow(sessions []*session.Session, row int, cols int, cellWidth int, cursor int, styles *Styles) []string
+        - renderCell(sess *session.Session, selected bool, width int, styles *Styles) string
+        - renderEmptyCell(width int, styles *Styles) string
+        - joinCellsHorizontally(cells []string) []string
+        - visibleRowCount(totalHeight int) int
+        - updateScrollOffset(cursorRow int, visibleRows int, totalRows int) 
+        - pageSize(cols int) int
+        - renderEmpty(styles *Styles) string
+        - needsScrollIndicator(totalRows int, visibleRows int) bool
+        - renderScrollIndicator(cursorRow int, totalRows int, visibleRows int, styles *Styles) string
+
+        + Name() string
+        + Render(sessions []*session.Session, cursor int, width int, height int, styles *Styles, cfg *config.Config) string
+        + HandleKey(msg bubbletea.KeyMsg, sessionCount int, cursor int) (int, bool)
+        + GetScrollOffset() int
+        + ResetScroll() 
+        + GetCachedDimensions() (int, int)
+
+    }
+    class "KeyMap" << (S,Aquamarine) >> {
+        + Up key.Binding
+        + Down key.Binding
+        + Left key.Binding
+        + Right key.Binding
+        + PageUp key.Binding
+        + PageDown key.Binding
+        + Home key.Binding
+        + End key.Binding
+        + Enter key.Binding
+        + Refresh key.Binding
+        + Sort key.Binding
+        + Search key.Binding
+        + Filter key.Binding
+        + Help key.Binding
+        + ToggleView key.Binding
+        + Quit key.Binding
+        + Escape key.Binding
+
+        + ShortHelp() []key.Binding
+        + FullHelp() [][]key.Binding
+
+    }
+    interface "Layout"  {
+        + Render(sessions []*session.Session, cursor int, width int, height int, styles *Styles, cfg *config.Config) string
+        + HandleKey(msg bubbletea.KeyMsg, sessionCount int, cursor int) (int, bool)
+        + Name() string
+
+    }
+    class "LayoutType" << (S,Aquamarine) >> {
+        + String() string
+
+    }
+    class "ListLayout" << (S,Aquamarine) >> {
+        - columns []Column
+        - widths []int
+        - scrollOffset int
+        - lastWidth int
+        - keys KeyMap
+
+        - visibleRowCount(totalHeight int) int
+        - updateScrollOffset(cursor int, visibleCount int, totalCount int) 
+        - pageSize() int
+        - renderEmpty(styles *Styles) string
+        - renderHeader(styles *Styles) string
+        - renderRow(sess *session.Session, selected bool, styles *Styles) string
+        - needsScrollIndicator(totalCount int, visibleCount int) bool
+        - renderScrollIndicator(cursor int, totalCount int, visibleCount int, styles *Styles) string
+
+        + Name() string
+        + Render(sessions []*session.Session, cursor int, width int, height int, styles *Styles, cfg *config.Config) string
+        + HandleKey(msg bubbletea.KeyMsg, sessionCount int, cursor int) (int, bool)
+        + SetColumns(columns []Column) 
+        + GetColumns() []Column
+        + GetScrollOffset() int
+        + ResetScroll() 
+
+    }
+    class "MessagesColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "Model" << (S,Aquamarine) >> {
+        - sessions []*session.Session
+        - filteredSessions []*session.Session
+        - cursorIndex int
+        - cursorSessionID string
+        - viewMode ViewMode
+        - uiMode UIMode
+        - layout Layout
+        - layoutType LayoutType
+        - styles *Styles
+        - sortConfig session.SortConfig
+        - filterConfig session.FilterConfig
+        - searchQuery string
+        - windowWidth int
+        - windowHeight int
+        - loading bool
+        - refreshing bool
+        - lastError error
+        - showHelp bool
+        - refreshInterval time.Duration
+        - service *session.Service
+        - config *config.Config
+        - keys KeyMap
+        - ready bool
+        - navigatorFactory NavigatorFactory
+        - matcher *tmux.Matcher
+
+        - loadSessionsCmd() bubbletea.Cmd
+        - refreshSessionsCmd() bubbletea.Cmd
+        - updateStatusCmd(sessions []*session.Session) bubbletea.Cmd
+        - tickCmd() bubbletea.Cmd
+        - refreshMatcherCmd() bubbletea.Cmd
+        - applyFiltersAndSort() 
+        - restoreCursor() 
+        - keepCursorInBounds() 
+        - saveCursor() 
+        - updateUIMode() 
+        - switchLayout() 
+        - contentHeight() int
+        - contentWidth() int
+        - handleWindowSize(msg bubbletea.WindowSizeMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleSessionsLoaded(msg sessionsLoadedMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleSessionsRefreshed(msg sessionsRefreshedMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleStatusUpdated(msg statusUpdatedMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleRefreshTick(_ refreshTickMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleError(msg errorMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleKeyPress(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleKeyPressInHelp(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleKeyPressInSearch(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleNavigation(msg bubbletea.KeyMsg) (bubbletea.Model, bubbletea.Cmd)
+        - selectSession() (bubbletea.Model, bubbletea.Cmd)
+        - cycleSort() (bubbletea.Model, bubbletea.Cmd)
+        - toggleHelp() (bubbletea.Model, bubbletea.Cmd)
+        - toggleViewMode() (bubbletea.Model, bubbletea.Cmd)
+        - enterSearchMode() (bubbletea.Model, bubbletea.Cmd)
+        - handleSessionSelected(msg sessionSelectedMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleNavigationResult(msg navigationResultMsg) (bubbletea.Model, bubbletea.Cmd)
+        - handleMatcherRefreshed(msg matcherRefreshedMsg) (bubbletea.Model, bubbletea.Cmd)
+        - navigateToPane(sess *session.Session, paneID string) bubbletea.Cmd
+        - findAndNavigateToSession(sess *session.Session) bubbletea.Cmd
+        - renderFullView(content string) string
+        - renderLayoutContent() string
+        - viewHeader() string
+        - getStyles() *Styles
+        - sortFieldName() string
+        - viewList() string
+        - renderSessionLine(sess *session.Session, selected bool) string
+        - viewFooter() string
+        - alternateLayoutName() string
+        - viewSearchBar() string
+        - viewHelp() string
+        - formatHelpEntry(key string, desc string, styles *Styles) string
+        - renderLoading() string
+        - renderLoadingContent() string
+        - renderErrorContent() string
+        - renderEmptyContent() string
+
+        + Init() bubbletea.Cmd
+        + SelectedSession() *session.Session
+        + SessionCount() int
+        + FilteredSessionCount() int
+        + IsLoading() bool
+        + IsRefreshing() bool
+        + LastError() error
+        + SetLayout(layoutType LayoutType) 
+        + GetLayout() Layout
+        + GetLayoutType() LayoutType
+        + GetUIMode() UIMode
+        + Update(msg bubbletea.Msg) (bubbletea.Model, bubbletea.Cmd)
+        + View() string
+
+    }
+    class "ModelColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "ModelConfig" << (S,Aquamarine) >> {
+        + Service *session.Service
+        + Config *config.Config
+        + Keys *KeyMap
+        + RefreshInterval time.Duration
+        + NavigatorFactory NavigatorFactory
+
+    }
+    class "ModifiedColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "NameColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "PreviewColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "ProjectColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "StatusColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "Styles" << (S,Aquamarine) >> {
+        + App lipgloss.Style
+        + Header lipgloss.Style
+        + Footer lipgloss.Style
+        + List lipgloss.Style
+        + ItemNormal lipgloss.Style
+        + ItemSelected lipgloss.Style
+        + StatusActive lipgloss.Style
+        + StatusIdle lipgloss.Style
+        + StatusExited lipgloss.Style
+        + Title lipgloss.Style
+        + Name lipgloss.Style
+        + Preview lipgloss.Style
+        + Time lipgloss.Style
+        + Indicator lipgloss.Style
+        + Cell lipgloss.Style
+        + CellSelected lipgloss.Style
+        + Error lipgloss.Style
+        + Warning lipgloss.Style
+        + Success lipgloss.Style
+        + Search lipgloss.Style
+        + SearchPrompt lipgloss.Style
+        + SearchInput lipgloss.Style
+        + Help lipgloss.Style
+        + HelpKey lipgloss.Style
+        + HelpDesc lipgloss.Style
+        + HelpSection lipgloss.Style
+        + Dim lipgloss.Style
+
+        + StatusStyle(status session.Status) lipgloss.Style
+        + RenderStatusIndicator(status session.Status) string
+
+    }
+    class "TurnsColumn" << (S,Aquamarine) >> {
+        + ID() config.ColumnType
+        + Header() string
+        + Render(sess *session.Session, width int, styles *Styles) string
+        + MinWidth() int
+        + FlexWeight() int
+
+    }
+    class "claude-dashboard.internal.ui.LayoutType" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.ui.NavigatorFactory" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.ui.UIMode" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.ui.ViewMode" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.ui.refreshTickMsg" << (T, #FF7700) >>  {
+    }
+    class "claude-dashboard.internal.ui.windowSizeMsg" << (T, #FF7700) >>  {
+    }
+    class "errorMsg" << (S,Aquamarine) >> {
+        + Error error
+        + Context string
+
+    }
+    class "filterChangedMsg" << (S,Aquamarine) >> {
+        + Config session.FilterConfig
+
+    }
+    class "helpToggleMsg" << (S,Aquamarine) >> {
+    }
+    class "matcherRefreshedMsg" << (S,Aquamarine) >> {
+        + Error error
+
+    }
+    class "navigationResultMsg" << (S,Aquamarine) >> {
+        + Session *session.Session
+        + PaneID string
+        + Error error
+
+    }
+    class "quitMsg" << (S,Aquamarine) >> {
+    }
+    class "searchQueryMsg" << (S,Aquamarine) >> {
+        + Query string
+
+    }
+    class "sessionSelectedMsg" << (S,Aquamarine) >> {
+        + Session *session.Session
+
+    }
+    class "sessionsLoadedMsg" << (S,Aquamarine) >> {
+        + Sessions []*session.Session
+        + Error error
+
+    }
+    class "sessionsRefreshedMsg" << (S,Aquamarine) >> {
+        + Sessions []*session.Session
+        + Error error
+
+    }
+    class "sortChangedMsg" << (S,Aquamarine) >> {
+        + Field session.SortField
+        + Ascending bool
+
+    }
+    class "statusUpdatedMsg" << (S,Aquamarine) >> {
+        + Sessions []*session.Session
+        + Error error
+
+    }
+}
+namespace util {
+}
+namespace cmd {
+    namespace debug-matcher {
+    }
+}
+"__builtin__.int" #.. "claude-dashboard.internal.config.ColumnType"
+"__builtin__.int" #.. "claude-dashboard.internal.config.DisplayMode"
+"__builtin__.int" #.. "claude-dashboard.internal.config.LayoutType"
+"__builtin__.int" #.. "claude-dashboard.internal.logging.Level"
+"__builtin__.int" #.. "claude-dashboard.internal.session.SortField"
+"__builtin__.int" #.. "claude-dashboard.internal.session.Status"
+"__builtin__.int" #.. "claude-dashboard.internal.ui.LayoutType"
+"__builtin__.int" #.. "claude-dashboard.internal.ui.UIMode"
+"__builtin__.int" #.. "claude-dashboard.internal.ui.ViewMode"
+"__builtin__.string" #.. "claude-dashboard.internal.session.ContentBlockType"
+"__builtin__.string" #.. "claude-dashboard.internal.session.MessageType"
+"__builtin__.string" #.. "claude-dashboard.internal.session.ResultSubtype"
+"__builtin__.string" #.. "claude-dashboard.internal.session.SystemSubtype"
+"claude-dashboard.internaluifontcolorbluefuncfontstringtmuxPaneNavigator" #.. "claude-dashboard.internal.ui.NavigatorFactory"
+"claude-dashboard.internaluibubbleteaWindowSizeMsg" #.. "claude-dashboard.internal.ui.windowSizeMsg"
+"claude-dashboard.internaluitimeTime" #.. "claude-dashboard.internal.ui.refreshTickMsg"
+"claude-dashboard.internal.session.BaseLine" *-- "claude-dashboard.internal.session.AssistantLine"
+"claude-dashboard.internal.session.BaseLine" *-- "claude-dashboard.internal.session.QueueOperationLine"
+"claude-dashboard.internal.session.BaseLine" *-- "claude-dashboard.internal.session.ResultLine"
+"claude-dashboard.internal.session.BaseLine" *-- "claude-dashboard.internal.session.SystemLine"
+"claude-dashboard.internal.session.BaseLine" *-- "claude-dashboard.internal.session.UserLine"
+"claude-dashboard.internal.tmux.Process" *-- "claude-dashboard.internal.tmux.ClaudeProcess"
+
+
+
+@enduml
