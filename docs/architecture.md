@@ -183,10 +183,13 @@ classDiagram
         -processList *ProcessList
         -claudeProcesses []ClaudeProcess
         -pidToSessionID map[int]string
+        -sessionFilePaths []string
         +Refresh() error
+        +SetSessionFilePaths(paths []string)
         +MatchSessionToPane(session) *Pane
         +HasRunningProcess(session) bool
         +FindClaudeProcesses() []ClaudeProcess
+        +GetPIDToSessionID() map[int]string
     }
 
     class PaneMap {
@@ -508,12 +511,13 @@ classDiagram
 #### `matcher.go` - Session-to-Pane Matching
 - **Matcher**: Coordinates pane and process discovery
   - Maintains PaneMap and ProcessList
-  - Caches session-to-pane and PID-to-session mappings
-  - Implements CWD-based and memory-based matching
-  - **Refresh()**: Updates all mappings
-  - **MatchSessionToPane()**: Finds pane for session
-  - **HasRunningProcess()**: Checks if session is running
+  - Uses memory scanning as sole source for session-to-PID mapping
+  - Session-to-pane derived on-the-fly: sessionID -> PID -> TTY -> pane
+  - **Refresh()**: Updates all mappings (panes, processes, memory scan)
+  - **MatchSessionToPane()**: Finds pane for session via PID lookup
+  - **HasRunningProcess()**: Checks if session is owned by a PID
   - **FindClaudeProcesses()**: Identifies Claude processes
+  - **SetSessionFilePaths()**: Configures paths for memory scanning
 - **ClaudeProcess**: A process running Claude with extracted SessionID
 
 #### `navigate.go` - Pane Navigation
@@ -543,9 +547,12 @@ classDiagram
 #### `memory_scanner.go` - Process Memory Scanning
 - **MemoryScanner**: Scans process memory to find session IDs
   - Reads /proc/{pid}/maps and /proc/{pid}/mem
-  - Searches for session ID patterns
-  - More reliable than CWD-based matching for sub-agents
-  - Used for final PID-to-SessionID mapping
+  - Uses NULL-prefixed patterns (\x00 + full path) to avoid false positives
+  - Only scans memory regions <= 256KB (V8's session path storage regions)
+  - Filters to UUID-patterned session files (skips agent-*.jsonl)
+  - **ReadAllMemory()**: Reads all eligible regions into single buffer
+  - **ScanAllPIDsForSessions()**: Main entry point for batch scanning
+  - Used as sole source for PID-to-SessionID mapping (no CWD fallback)
 
 ---
 
@@ -834,10 +841,12 @@ Model.Update(SessionSelectedMsg)
 - Version tracking for format changes
 
 ### 7. **Process Matching**
-- Three strategies:
-  1. CWD matching (fast)
-  2. Session ID from command line (reliable for explicit --resume)
-  3. Memory scanning (slowest but most reliable for sub-agents)
+- Single strategy: Memory scanning with NULL-prefixed patterns
+  - Reads /proc/{pid}/mem for each Claude process
+  - Searches for \x00 + full session path in memory
+  - NULL prefix discriminates true ownership from paths in chat history
+  - Only scans regions <= 256KB (V8's session storage regions)
+  - Filters to UUID-patterned sessions (skips agent-*.jsonl)
 
 ### 8. **Configuration Cascade**
 - Priority: Defaults < File < Flags

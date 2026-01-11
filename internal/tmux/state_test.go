@@ -400,6 +400,21 @@ func TestUpdateSessionStatus(t *testing.T) {
 	}
 }
 
+// stateTestMockScanner implements MemoryScannerInterface for state tests.
+type stateTestMockScanner struct {
+	pidToSession map[int]string
+}
+
+func (m *stateTestMockScanner) ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
+	result := make(map[int]string)
+	for _, pid := range pids {
+		if sessionID, ok := m.pidToSession[pid]; ok {
+			result[pid] = sessionID
+		}
+	}
+	return result
+}
+
 // TestUpdateAllSessionStatuses tests batch status updates.
 func TestUpdateAllSessionStatuses(t *testing.T) {
 	// Set TMUX env var for the test
@@ -408,18 +423,30 @@ func TestUpdateAllSessionStatuses(t *testing.T) {
 	runner := &combinedMockRunner{
 		tmuxOutput: []byte(`/dev/pts/42	%0	main	0	code	0	bash
 `),
-		processOutput: []byte(`12346	pts/42	claude --resume session123
+		processOutput: []byte(`12346	pts/42	claude
 `),
 		cwds: map[int]string{
 			12346: "/home/user/project1",
 		},
 	}
 
+	// Use mock memory scanner to map PID 12346 to session123
+	mockScanner := &stateTestMockScanner{
+		pidToSession: map[int]string{
+			12346: "session123",
+		},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(mockScanner)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user/session123.jsonl",
+		"/home/user/.claude/projects/-home-user/session456.jsonl",
+	})
 
 	sessions := []*session.Session{
 		{
-			ID:  "session123", // Has matching process
+			ID:  "session123", // Has matching process via memory scan
 			CWD: "/home/user/project1",
 		},
 		{
@@ -431,7 +458,7 @@ func TestUpdateAllSessionStatuses(t *testing.T) {
 
 	UpdateAllSessionStatuses(sessions, matcher, nil)
 
-	// First session should have process
+	// First session should have process (matched via memory scanning)
 	if sessions[0].Status == session.StatusExited {
 		t.Error("Session 1 should not be Exited (has matching process)")
 	}

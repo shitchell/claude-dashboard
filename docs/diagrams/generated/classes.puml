@@ -515,9 +515,7 @@ namespace tmux {
         - paneMap *PaneMap
         - processList *ProcessList
         - claudeProcesses []ClaudeProcess
-        - sessionToPaneID <font color=blue>map</font>[string]string
         - pidToSessionID <font color=blue>map</font>[int]string
-        - cwdToPanes <font color=blue>map</font>[string][]string
         - sessionFilePaths []string
         - processRunner ProcessRunner
         - tmuxRunner CommandRunner
@@ -535,7 +533,6 @@ namespace tmux {
         + HasRunningProcess(sess *session.Session) bool
         + GetPaneByID(id string) *Pane
         + AllPanes() []*Pane
-        + GetCWDToPanes() <font color=blue>map</font>[string][]string
         + GetPIDToSessionID() <font color=blue>map</font>[int]string
         + FindProcessBySessionID(sessionID string) *ClaudeProcess
         + FindProcessesByCWD(cwd string) []ClaudeProcess
@@ -555,10 +552,11 @@ namespace tmux {
         - scanRegion(memFile *os.File, region MemoryRegion, patterns [][]byte) (<font color=blue>map</font>[string]int, error)
 
         + ScanForPatterns(patterns [][]byte) <font color=blue>map</font>[string]int
+        + ReadAllMemory() ([]byte, error)
 
     }
     interface "MemoryScannerInterface"  {
-        + MatchPIDToSession(pid int, sessionPatterns <font color=blue>map</font>[string][]byte) (string, int)
+        + ScanAllPIDsForSessions(pids []int, sessionPaths []string) <font color=blue>map</font>[int]string
 
     }
     class "Navigator" << (S,Aquamarine) >> {

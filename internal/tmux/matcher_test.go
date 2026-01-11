@@ -300,6 +300,21 @@ func (m *combinedMockRunner) Run(args ...string) ([]byte, error) {
 	return m.tmuxOutput, nil
 }
 
+// mockMemoryScanner implements MemoryScannerInterface for testing.
+type mockMemoryScanner struct {
+	pidToSession map[int]string
+}
+
+func (m *mockMemoryScanner) ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
+	result := make(map[int]string)
+	for _, pid := range pids {
+		if sessionID, ok := m.pidToSession[pid]; ok {
+			result[pid] = sessionID
+		}
+	}
+	return result
+}
+
 // TestMatcherIntegration tests the full matching flow with mock data.
 func TestMatcherIntegration(t *testing.T) {
 	// Set TMUX env var for the test
@@ -312,7 +327,7 @@ func TestMatcherIntegration(t *testing.T) {
 `),
 		// Two processes, one is claude
 		processOutput: []byte(`12345	pts/42	bash
-12346	pts/43	claude --resume session123
+12346	pts/43	claude
 `),
 		cwds: map[int]string{
 			12345: "/home/user",
@@ -320,7 +335,19 @@ func TestMatcherIntegration(t *testing.T) {
 		},
 	}
 
+	// Mock memory scanner that maps PID 12346 to session123
+	memScanner := &mockMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session123",
+		},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(memScanner)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session123.jsonl",
+	})
+
 	err := matcher.Refresh()
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
@@ -358,7 +385,7 @@ func TestMatcherMatchSessionToPane(t *testing.T) {
 /dev/pts/44	%2	main	2	other	0	vim
 `),
 		processOutput: []byte(`12345	pts/42	bash
-12346	pts/43	claude --resume session123
+12346	pts/43	claude
 12347	pts/44	claude
 `),
 		cwds: map[int]string{
@@ -368,13 +395,27 @@ func TestMatcherMatchSessionToPane(t *testing.T) {
 		},
 	}
 
+	// Mock memory scanner
+	memScanner := &mockMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session123",
+			12347: "session456",
+		},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(memScanner)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project1/session123.jsonl",
+		"/home/user/.claude/projects/-home-user-project2/session456.jsonl",
+	})
+
 	err := matcher.Refresh()
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 
-	// Test matching by session ID
+	// Test matching by session ID (via memory scan)
 	sess1 := &session.Session{
 		ID:  "session123",
 		CWD: "/home/user/project1",
@@ -386,19 +427,19 @@ func TestMatcherMatchSessionToPane(t *testing.T) {
 		t.Errorf("MatchSessionToPane by session ID returned pane %q, want %%1", pane1.ID)
 	}
 
-	// Test matching by CWD when session ID doesn't match
+	// Test matching second session
 	sess2 := &session.Session{
-		ID:  "nonexistent",
+		ID:  "session456",
 		CWD: "/home/user/project2",
 	}
 	pane2 := matcher.MatchSessionToPane(sess2)
 	if pane2 == nil {
-		t.Error("MatchSessionToPane by CWD returned nil")
+		t.Error("MatchSessionToPane for session456 returned nil")
 	} else if pane2.ID != "%2" {
-		t.Errorf("MatchSessionToPane by CWD returned pane %q, want %%2", pane2.ID)
+		t.Errorf("MatchSessionToPane for session456 returned pane %q, want %%2", pane2.ID)
 	}
 
-	// Test no match
+	// Test no match for unknown session
 	sess3 := &session.Session{
 		ID:  "nonexistent",
 		CWD: "/home/user/nonexistent",
@@ -423,20 +464,32 @@ func TestMatcherHasRunningProcess(t *testing.T) {
 	runner := &combinedMockRunner{
 		tmuxOutput: []byte(`/dev/pts/42	%0	main	0	code	0	bash
 `),
-		processOutput: []byte(`12346	pts/42	claude --resume session123
+		processOutput: []byte(`12346	pts/42	claude
 `),
 		cwds: map[int]string{
 			12346: "/home/user/project",
 		},
 	}
 
+	// Mock memory scanner
+	memScanner := &mockMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session123",
+		},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(memScanner)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session123.jsonl",
+	})
+
 	err := matcher.Refresh()
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 
-	// Test session with matching session ID
+	// Test session with matching session ID (from memory scan)
 	sess1 := &session.Session{
 		ID:  "session123",
 		CWD: "/home/user/project",
@@ -445,13 +498,13 @@ func TestMatcherHasRunningProcess(t *testing.T) {
 		t.Error("HasRunningProcess should return true for matching session ID")
 	}
 
-	// Test session with matching CWD only
+	// Test session with no match (different session ID)
 	sess2 := &session.Session{
 		ID:  "other",
 		CWD: "/home/user/project",
 	}
-	if !matcher.HasRunningProcess(sess2) {
-		t.Error("HasRunningProcess should return true for matching CWD")
+	if matcher.HasRunningProcess(sess2) {
+		t.Error("HasRunningProcess should return false for non-matching session ID")
 	}
 
 	// Test session with no match
@@ -477,13 +530,27 @@ func TestMatcherFindProcessBySessionID(t *testing.T) {
 	runner := &combinedMockRunner{
 		tmuxOutput: []byte(`/dev/pts/42	%0	main	0	code	0	bash
 `),
-		processOutput: []byte(`12346	pts/42	claude --resume session123
-12347	pts/42	claude --resume session456
+		processOutput: []byte(`12346	pts/42	claude
+12347	pts/42	claude
 `),
 		cwds: map[int]string{},
 	}
 
+	// Mock memory scanner
+	memScanner := &mockMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session123",
+			12347: "session456",
+		},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(memScanner)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user/session123.jsonl",
+		"/home/user/.claude/projects/-home-user/session456.jsonl",
+	})
+
 	err := matcher.Refresh()
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
@@ -531,7 +598,14 @@ func TestMatcherFindProcessesByCWD(t *testing.T) {
 		},
 	}
 
+	// Mock memory scanner (no session mapping needed for CWD test)
+	memScanner := &mockMemoryScanner{
+		pidToSession: map[int]string{},
+	}
+
 	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(memScanner)
+
 	err := matcher.Refresh()
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
@@ -576,32 +650,108 @@ func TestNewMatcher(t *testing.T) {
 	}
 }
 
-// TestMatchByMostRecent tests the matchByMostRecent function.
-func TestMatchByMostRecent(t *testing.T) {
-	// Test with empty slice
-	result := matchByMostRecent([]ClaudeProcess{})
-	if result != nil {
-		t.Errorf("matchByMostRecent([]) = %+v, want nil", result)
+// TestIsUUIDSessionFile tests the UUID pattern matching.
+func TestIsUUIDSessionFile(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		expected  bool
+	}{
+		{
+			name:      "valid UUID",
+			sessionID: "cd49619d-7192-4a31-8b66-37fa4751c8be",
+			expected:  true,
+		},
+		{
+			name:      "another valid UUID",
+			sessionID: "8808c685-1b64-46c9-9709-839d02ed1478",
+			expected:  true,
+		},
+		{
+			name:      "agent prefix",
+			sessionID: "agent-cd49619d-7192-4a31-8b66-37fa4751c8be",
+			expected:  false,
+		},
+		{
+			name:      "short string",
+			sessionID: "abc123",
+			expected:  false,
+		},
+		{
+			name:      "empty string",
+			sessionID: "",
+			expected:  false,
+		},
+		{
+			name:      "uppercase UUID (should not match)",
+			sessionID: "CD49619D-7192-4A31-8B66-37FA4751C8BE",
+			expected:  false,
+		},
 	}
 
-	// Test with single process
-	single := []ClaudeProcess{
-		{Process: Process{PID: 100}},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsUUIDSessionFile(tt.sessionID)
+			if result != tt.expected {
+				t.Errorf("IsUUIDSessionFile(%q) = %v, want %v", tt.sessionID, result, tt.expected)
+			}
+		})
 	}
-	result = matchByMostRecent(single)
-	if result == nil || result.PID != 100 {
-		t.Errorf("matchByMostRecent(single) = %+v, want PID 100", result)
+}
+
+// TestFilterUUIDSessionPaths tests filtering session paths to UUID-only.
+func TestFilterUUIDSessionPaths(t *testing.T) {
+	paths := []string{
+		"/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl",
+		"/home/user/.claude/projects/-home-user/agent-abc123.jsonl",
+		"/home/user/.claude/projects/-home-user/8808c685-1b64-46c9-9709-839d02ed1478.jsonl",
+		"/home/user/.claude/projects/-home-user/invalid.jsonl",
 	}
 
-	// Test with multiple processes
-	multiple := []ClaudeProcess{
-		{Process: Process{PID: 100}},
-		{Process: Process{PID: 300}},
-		{Process: Process{PID: 200}},
+	filtered := FilterUUIDSessionPaths(paths)
+
+	if len(filtered) != 2 {
+		t.Errorf("FilterUUIDSessionPaths returned %d paths, want 2", len(filtered))
 	}
-	result = matchByMostRecent(multiple)
-	if result == nil || result.PID != 300 {
-		t.Errorf("matchByMostRecent(multiple) = %+v, want PID 300", result)
+
+	// Check that only UUID paths remain
+	for _, path := range filtered {
+		if path != paths[0] && path != paths[2] {
+			t.Errorf("Unexpected path in filtered results: %s", path)
+		}
+	}
+}
+
+// TestBuildNullPrefixedPatterns tests building NULL-prefixed patterns.
+func TestBuildNullPrefixedPatterns(t *testing.T) {
+	paths := []string{
+		"/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl",
+		"/home/user/.claude/projects/-home-user/agent-abc123.jsonl", // Should be skipped
+	}
+
+	patterns := BuildNullPrefixedPatterns(paths)
+
+	// Should only have one pattern (agent file skipped)
+	if len(patterns) != 1 {
+		t.Errorf("BuildNullPrefixedPatterns returned %d patterns, want 1", len(patterns))
+	}
+
+	// Check the pattern format
+	sessionID := "cd49619d-7192-4a31-8b66-37fa4751c8be"
+	pattern, ok := patterns[sessionID]
+	if !ok {
+		t.Fatalf("Pattern for session %s not found", sessionID)
+	}
+
+	// Pattern should start with NULL byte
+	if pattern[0] != 0x00 {
+		t.Errorf("Pattern does not start with NULL byte")
+	}
+
+	// Pattern should contain the full path after NULL
+	expectedPath := paths[0]
+	if string(pattern[1:]) != expectedPath {
+		t.Errorf("Pattern path = %q, want %q", string(pattern[1:]), expectedPath)
 	}
 }
 

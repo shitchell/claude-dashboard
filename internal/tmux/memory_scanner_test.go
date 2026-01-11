@@ -280,16 +280,20 @@ func TestMemoryScannerScanForPatternsEmpty(t *testing.T) {
 	}
 }
 
-// mockMemoryScanner implements MemoryScannerInterface for testing.
-type mockMemoryScanner struct {
+// legacyMockMemoryScanner is a test helper for the old interface.
+// Note: The production code now uses the new ScanAllPIDsForSessions interface.
+type legacyMockMemoryScanner struct {
 	pidToSession map[int]string
-	pidToCounts  map[int]int
 }
 
-func (m *mockMemoryScanner) MatchPIDToSession(pid int, sessionPatterns map[string][]byte) (string, int) {
-	sessionID := m.pidToSession[pid]
-	count := m.pidToCounts[pid]
-	return sessionID, count
+func (m *legacyMockMemoryScanner) ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
+	result := make(map[int]string)
+	for _, pid := range pids {
+		if sessionID, ok := m.pidToSession[pid]; ok {
+			result[pid] = sessionID
+		}
+	}
+	return result
 }
 
 // TestMatcherWithMockMemoryScanner tests the matcher integration with mock memory scanning.
@@ -313,14 +317,10 @@ func TestMatcherWithMockMemoryScanner(t *testing.T) {
 		},
 	}
 
-	mockScanner := &mockMemoryScanner{
+	mockScanner := &legacyMockMemoryScanner{
 		pidToSession: map[int]string{
 			12346: "session-abc",
 			12347: "session-def",
-		},
-		pidToCounts: map[int]int{
-			12346: 50,
-			12347: 30,
 		},
 	}
 
@@ -383,12 +383,9 @@ func TestMatcherMatchSessionToPaneWithMemoryScan(t *testing.T) {
 		},
 	}
 
-	mockScanner := &mockMemoryScanner{
+	mockScanner := &legacyMockMemoryScanner{
 		pidToSession: map[int]string{
 			12346: "session-xyz",
-		},
-		pidToCounts: map[int]int{
-			12346: 100,
 		},
 	}
 
