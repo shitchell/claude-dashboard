@@ -5,6 +5,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -167,13 +168,13 @@ func TestCreateTestSession(t *testing.T) {
 
 	// Verify content contains expected data
 	contentStr := string(content)
-	if !containsString(contentStr, "test-session-abc123") {
+	if !strings.Contains(contentStr, "test-session-abc123") {
 		t.Error("Session file does not contain session ID")
 	}
-	if !containsString(contentStr, "claude-sonnet-4-20250514") {
+	if !strings.Contains(contentStr, "claude-sonnet-4-20250514") {
 		t.Error("Session file does not contain model")
 	}
-	if !containsString(contentStr, "Test session summary") {
+	if !strings.Contains(contentStr, "Test session summary") {
 		t.Error("Session file does not contain summary")
 	}
 
@@ -261,7 +262,7 @@ func TestWaitForSessionFileSuccess(t *testing.T) {
 	if result == "" {
 		t.Error("WaitForSessionFile should have found the new file")
 	}
-	if !containsString(result, "new-session") {
+	if !strings.Contains(result, "new-session") {
 		t.Errorf("WaitForSessionFile returned unexpected file: %q", result)
 	}
 
@@ -307,21 +308,4 @@ func TestCleanupClearsSlice(t *testing.T) {
 	if len(h.cleanupFuncs) != 0 {
 		t.Errorf("After Cleanup, cleanupFuncs length = %d, want 0", len(h.cleanupFuncs))
 	}
-}
-
-// containsString is a helper to check if a string contains a substring.
-func containsString(haystack, needle string) bool {
-	return len(haystack) >= len(needle) &&
-		(haystack == needle ||
-		 len(needle) == 0 ||
-		 findSubstring(haystack, needle))
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

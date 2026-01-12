@@ -911,7 +911,7 @@ Model.Update(SessionSelectedMsg)
 
 **Key Components**:
 
-- **TestHarness**: E2E test orchestrator using gotmux library
+- **TestHarness**: E2E test orchestrator using gotmux library (streamlined API)
   - `CreateSession()`: Creates isolated tmux session
   - `RunDashboard()`: Launches dashboard binary in test pane
   - `SpawnClaude()`: Spawns real Claude Code instance, returns `ClaudeInstance`

@@ -86,8 +86,8 @@ func TestClearScenarioSessionMapping(t *testing.T) {
 	// This fixes the race condition where /clear creates the new session file
 	// immediately, before WaitForNewSession() can capture its baseline.
 	t.Log("Capturing session file snapshot before /clear...")
-	preCleatSnapshot := h.SnapshotSessionFiles()
-	t.Logf("Pre-/clear snapshot contains %d session files", len(preCleatSnapshot))
+	preClearSnapshot := h.SnapshotSessionFiles()
+	t.Logf("Pre-/clear snapshot contains %d session files", len(preClearSnapshot))
 
 	t.Log("Sending /clear to instance B...")
 	err := h.SendCommand(instanceB, "/clear")
@@ -112,7 +112,7 @@ func TestClearScenarioSessionMapping(t *testing.T) {
 	// Use WaitForSessionSince with the pre-/clear snapshot to correctly detect
 	// the new session, even if it was created immediately after /clear.
 	t.Log("Waiting for new session file (using pre-/clear snapshot)...")
-	newSessionID := h.WaitForSessionSince(instanceB, preCleatSnapshot, 30*time.Second)
+	newSessionID := h.WaitForSessionSince(instanceB, preClearSnapshot, 30*time.Second)
 	require.NotEmpty(t, newSessionID, "Instance B should have a new session ID after /clear")
 	require.NotEqual(t, originalBSessionID, newSessionID, "New session ID should differ from original")
 	t.Logf("Instance B new session ID: %s", newSessionID)

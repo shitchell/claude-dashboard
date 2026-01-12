@@ -1023,7 +1023,6 @@ namespace e2e {
         - getClaudePID(pane *gotmux.Pane) int
 
         + CreateSession(name string) *gotmux.Session
-        + GetSession() *gotmux.Session
         + GetTestDir() string
         + SetBinaryPath(path string) 
         + GetBinaryPath() string
@@ -1032,15 +1031,12 @@ namespace e2e {
         + RunDashboard(projectsDir string, args ...string) *gotmux.Pane
         + WaitForContent(pane *gotmux.Pane, content string, timeout time.Duration) bool
         + SendKeys(pane *gotmux.Pane, keys string) error
-        + SendKeysEnter(pane *gotmux.Pane, keys string) error
         + CapturePane(pane *gotmux.Pane) string
         + LogProof(t *testing.T, pane *gotmux.Pane, step string) string
         + Cleanup() 
         + SpawnClaude(prompt string) *ClaudeInstance
         + WaitForSessionFile(existingFiles []string, timeout time.Duration) string
-        + WaitForNewSession(instance *ClaudeInstance, timeout time.Duration) string
         + SpawnDashboard(projectsDir string, args ...string) *gotmux.Pane
-        + AssertSessionStatus(t *testing.T, pane *gotmux.Pane, sessionID string, expectedStatus string, timeout time.Duration) 
         + SendCommand(instance *ClaudeInstance, command string) error
         + SendPrompt(instance *ClaudeInstance, prompt string) error
         + SnapshotSessionFiles() []string

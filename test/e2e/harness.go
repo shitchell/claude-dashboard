@@ -8,13 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/GianlucaP106/gotmux/gotmux"
-	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -93,11 +91,6 @@ func (h *TestHarness) CreateSession(name string) *gotmux.Session {
 	})
 
 	return session
-}
-
-// GetSession returns the current test session.
-func (h *TestHarness) GetSession() *gotmux.Session {
-	return h.session
 }
 
 // GetTestDir returns the temporary test directory.
@@ -259,15 +252,6 @@ func (h *TestHarness) WaitForContent(pane *gotmux.Pane, content string, timeout 
 // SendKeys sends keys to a pane.
 func (h *TestHarness) SendKeys(pane *gotmux.Pane, keys string) error {
 	return pane.SendKeys(keys)
-}
-
-// SendKeysEnter sends keys followed by pressing Enter.
-// It sends the keys first, then sends "Enter" separately to actually press the key.
-func (h *TestHarness) SendKeysEnter(pane *gotmux.Pane, keys string) error {
-	if err := pane.SendKeys(keys); err != nil {
-		return err
-	}
-	return pane.SendKeys("Enter")
 }
 
 // CapturePane captures the current pane content.
@@ -480,50 +464,6 @@ func (h *TestHarness) WaitForSessionFile(existingFiles []string, timeout time.Du
 	}
 }
 
-// WaitForNewSession waits for a Claude instance to have a different session ID
-// than the one it started with. This is useful for detecting /clear operations.
-// Returns the new session ID, or empty string if timeout.
-func (h *TestHarness) WaitForNewSession(instance *ClaudeInstance, timeout time.Duration) string {
-	h.t.Helper()
-
-	originalID := instance.SessionID
-	existingFiles := h.listSessionFiles()
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ""
-		case <-ticker.C:
-			currentFiles := h.listSessionFiles()
-			for _, f := range currentFiles {
-				// Check if this is a new file
-				isNew := true
-				for _, ef := range existingFiles {
-					if f == ef {
-						isNew = false
-						break
-					}
-				}
-				if isNew {
-					sessionID := strings.TrimSuffix(filepath.Base(f), ".jsonl")
-					if sessionID != originalID {
-						// Update the instance with the new session info
-						instance.SessionID = sessionID
-						instance.SessionFile = f
-						return sessionID
-					}
-				}
-			}
-		}
-	}
-}
-
 // getClaudePID attempts to get the PID of the claude process in the given pane.
 func (h *TestHarness) getClaudePID(pane *gotmux.Pane) int {
 	// Use pgrep to find claude processes in this TTY
@@ -586,27 +526,6 @@ func (h *TestHarness) SpawnDashboard(projectsDir string, args ...string) *gotmux
 	}
 
 	return pane
-}
-
-// AssertSessionStatus verifies that a session appears in the dashboard output
-// with the expected status indicator.
-func (h *TestHarness) AssertSessionStatus(t *testing.T, pane *gotmux.Pane, sessionID string, expectedStatus string, timeout time.Duration) {
-	t.Helper()
-
-	// Build a regex pattern to match the session with its status
-	// Status indicators are typically shown near the session ID
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s.*%s|%s.*%s`,
-		regexp.QuoteMeta(sessionID[:8]), regexp.QuoteMeta(expectedStatus),
-		regexp.QuoteMeta(expectedStatus), regexp.QuoteMeta(sessionID[:8])))
-
-	require.Eventually(t, func() bool {
-		output, err := pane.Capture()
-		if err != nil {
-			return false
-		}
-		return pattern.MatchString(output)
-	}, timeout, 200*time.Millisecond,
-		"Session %s should show status %q within %v", sessionID, expectedStatus, timeout)
 }
 
 // SendCommand sends a slash command (like /clear) to a Claude instance.
