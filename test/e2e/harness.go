@@ -354,10 +354,10 @@ func (h *TestHarness) SpawnClaude(prompt string) *ClaudeInstance {
 	// Record session files before spawning
 	existingFiles := h.listSessionFiles()
 
-	// Build the claude command with prompt
-	// Use -p for initial prompt (not --resume since this is a new session)
+	// Build the claude command
+	// Start interactive Claude, then send prompt via SendKeys after UI renders
 	// Set ANTHROPIC_API_KEY='' to force subscription mode instead of API credits
-	cmd := fmt.Sprintf("ANTHROPIC_API_KEY='' claude -p %q", prompt)
+	cmd := "ANTHROPIC_API_KEY='' claude"
 
 	// Send the command to start Claude - send text then press Enter
 	if err := pane.SendKeys(cmd); err != nil {
@@ -379,6 +379,25 @@ func (h *TestHarness) SpawnClaude(prompt string) *ClaudeInstance {
 
 	// Try to get the PID of the claude process
 	pid := h.getClaudePID(pane)
+
+	// Wait for Claude UI to render (look for common UI indicators)
+	h.t.Log("Waiting for Claude UI to render...")
+	claudeUIReady := h.WaitForContent(pane, "Claude", 15*time.Second)
+	if !claudeUIReady {
+		// Try alternate indicators if "Claude" not found
+		output, _ := pane.Capture()
+		h.t.Logf("Claude UI not detected after 15s. Pane content:\n%s", output)
+		h.t.Fatalf("Claude UI did not render in time")
+	}
+
+	// Now send the initial prompt
+	h.t.Logf("Sending initial prompt: %s", prompt)
+	if err := pane.SendKeys(prompt); err != nil {
+		h.t.Fatalf("Failed to send prompt: %v", err)
+	}
+	if err := pane.SendKeys("Enter"); err != nil {
+		h.t.Fatalf("Failed to press Enter for prompt: %v", err)
+	}
 
 	instance := &ClaudeInstance{
 		Pane:        pane,
