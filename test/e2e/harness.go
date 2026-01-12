@@ -219,9 +219,12 @@ func (h *TestHarness) RunDashboard(projectsDir string, args ...string) *gotmux.P
 		cmd += " " + arg
 	}
 
-	// Run the dashboard (append Enter to execute)
-	if err := pane.SendKeys(cmd + " Enter"); err != nil {
+	// Run the dashboard - send command then press Enter
+	if err := pane.SendKeys(cmd); err != nil {
 		h.t.Fatalf("Failed to send command: %v", err)
+	}
+	if err := pane.SendKeys("Enter"); err != nil {
+		h.t.Fatalf("Failed to press Enter: %v", err)
 	}
 
 	return pane
@@ -258,9 +261,13 @@ func (h *TestHarness) SendKeys(pane *gotmux.Pane, keys string) error {
 	return pane.SendKeys(keys)
 }
 
-// SendKeysEnter sends keys followed by Enter.
+// SendKeysEnter sends keys followed by pressing Enter.
+// It sends the keys first, then sends "Enter" separately to actually press the key.
 func (h *TestHarness) SendKeysEnter(pane *gotmux.Pane, keys string) error {
-	return pane.SendKeys(keys + " Enter")
+	if err := pane.SendKeys(keys); err != nil {
+		return err
+	}
+	return pane.SendKeys("Enter")
 }
 
 // CapturePane captures the current pane content.
@@ -349,11 +356,15 @@ func (h *TestHarness) SpawnClaude(prompt string) *ClaudeInstance {
 
 	// Build the claude command with prompt
 	// Use -p for initial prompt (not --resume since this is a new session)
-	cmd := fmt.Sprintf("claude -p %q", prompt)
+	// Set ANTHROPIC_API_KEY='' to force subscription mode instead of API credits
+	cmd := fmt.Sprintf("ANTHROPIC_API_KEY='' claude -p %q", prompt)
 
-	// Send the command to start Claude
-	if err := pane.SendKeys(cmd + " Enter"); err != nil {
+	// Send the command to start Claude - send text then press Enter
+	if err := pane.SendKeys(cmd); err != nil {
 		h.t.Fatalf("Failed to send claude command: %v", err)
+	}
+	if err := pane.SendKeys("Enter"); err != nil {
+		h.t.Fatalf("Failed to press Enter: %v", err)
 	}
 
 	// Wait for a new session file to appear
@@ -547,9 +558,12 @@ func (h *TestHarness) SpawnDashboard(projectsDir string, args ...string) *gotmux
 		cmd += " " + arg
 	}
 
-	// Run the dashboard
-	if err := pane.SendKeys(cmd + " Enter"); err != nil {
+	// Run the dashboard - send command then press Enter
+	if err := pane.SendKeys(cmd); err != nil {
 		h.t.Fatalf("Failed to send dashboard command: %v", err)
+	}
+	if err := pane.SendKeys("Enter"); err != nil {
+		h.t.Fatalf("Failed to press Enter: %v", err)
 	}
 
 	return pane
@@ -580,14 +594,20 @@ func (h *TestHarness) AssertSessionStatus(t *testing.T, pane *gotmux.Pane, sessi
 func (h *TestHarness) SendCommand(instance *ClaudeInstance, command string) error {
 	h.t.Helper()
 
-	// Send the command followed by Enter
-	return instance.Pane.SendKeys(command + " Enter")
+	// Send the command text then press Enter
+	if err := instance.Pane.SendKeys(command); err != nil {
+		return err
+	}
+	return instance.Pane.SendKeys("Enter")
 }
 
 // SendPrompt sends a prompt to a Claude instance.
 func (h *TestHarness) SendPrompt(instance *ClaudeInstance, prompt string) error {
 	h.t.Helper()
 
-	// Send the prompt followed by Enter
-	return instance.Pane.SendKeys(prompt + " Enter")
+	// Send the prompt text then press Enter
+	if err := instance.Pane.SendKeys(prompt); err != nil {
+		return err
+	}
+	return instance.Pane.SendKeys("Enter")
 }

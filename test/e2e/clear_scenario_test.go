@@ -37,8 +37,8 @@ func TestClearScenarioSessionMapping(t *testing.T) {
 	// Create a test session
 	h.CreateSession("clear-scenario")
 
-	// PROOF: Log session creation
-	t.Log("PROOF: tmux session created for E2E test")
+	// Log session creation (not proof - session creation is infrastructure, not evidence)
+	t.Log("Created tmux session for E2E test")
 
 	// Step 1: Spawn Claude instance A (control)
 	t.Log("Spawning control Claude instance A...")
@@ -151,7 +151,7 @@ func TestMultipleClaudeInstancesTracking(t *testing.T) {
 
 	// Create a test session
 	h.CreateSession("multi-instance")
-	t.Log("PROOF: tmux session created for multi-instance test")
+	t.Log("Created tmux session for multi-instance test")
 
 	// Spawn multiple Claude instances
 	t.Log("Spawning Claude instance 1...")
