@@ -1043,6 +1043,8 @@ namespace e2e {
         + AssertSessionStatus(t *testing.T, pane *gotmux.Pane, sessionID string, expectedStatus string, timeout time.Duration) 
         + SendCommand(instance *ClaudeInstance, command string) error
         + SendPrompt(instance *ClaudeInstance, prompt string) error
+        + SnapshotSessionFiles() []string
+        + WaitForSessionSince(instance *ClaudeInstance, existingFiles []string, timeout time.Duration) string
 
     }
 }

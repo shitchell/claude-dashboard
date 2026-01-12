@@ -918,6 +918,8 @@ Model.Update(SessionSelectedMsg)
   - `SpawnDashboard()`: Spawns dashboard in new window
   - `WaitForContent()`: Polls pane output for expected content
   - `WaitForSessionFile()`: Detects new Claude session files
+  - `SnapshotSessionFiles()`: Captures session file list for comparison
+  - `WaitForSessionSince()`: Detects new sessions created after a snapshot
   - `SendKeys()`: Simulates keyboard input
   - `LogProof()`: Captures and logs pane content as test evidence
   - `Cleanup()`: Tears down test resources

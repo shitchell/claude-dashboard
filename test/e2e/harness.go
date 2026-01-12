@@ -630,3 +630,64 @@ func (h *TestHarness) SendPrompt(instance *ClaudeInstance, prompt string) error 
 	}
 	return instance.Pane.SendKeys("Enter")
 }
+
+// SnapshotSessionFiles returns a snapshot of all current session files.
+// Use this BEFORE an operation that creates a new session (like /clear),
+// then pass the snapshot to WaitForSessionSince() to detect the new session.
+func (h *TestHarness) SnapshotSessionFiles() []string {
+	h.t.Helper()
+	return h.listSessionFiles()
+}
+
+// WaitForSessionSince waits for a session file that wasn't in existingFiles.
+// This is designed to work with SnapshotSessionFiles() to detect sessions
+// created after a specific point in time, solving the race condition where
+// WaitForNewSession() might miss a session created before it starts polling.
+//
+// Use this pattern for /clear detection:
+//
+//	snapshot := h.SnapshotSessionFiles()  // BEFORE /clear
+//	h.SendCommand(instance, "/clear")
+//	time.Sleep(2 * time.Second)
+//	h.SendPrompt(instance, "prompt")
+//	newSessionID := h.WaitForSessionSince(instance, snapshot, 30*time.Second)
+//
+// Returns the new session ID, or empty string if timeout.
+func (h *TestHarness) WaitForSessionSince(instance *ClaudeInstance, existingFiles []string, timeout time.Duration) string {
+	h.t.Helper()
+
+	originalID := instance.SessionID
+
+	// Create a set of existing files for fast lookup
+	existing := make(map[string]bool)
+	for _, f := range existingFiles {
+		existing[f] = true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-ticker.C:
+			currentFiles := h.listSessionFiles()
+			for _, f := range currentFiles {
+				// Check if this is a new file (not in the pre-captured snapshot)
+				if !existing[f] {
+					sessionID := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+					if sessionID != originalID {
+						// Update the instance with the new session info
+						instance.SessionID = sessionID
+						instance.SessionFile = f
+						return sessionID
+					}
+				}
+			}
+		}
+	}
+}
