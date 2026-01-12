@@ -524,6 +524,7 @@ namespace tmux {
         - memoryScanner MemoryScannerInterface
 
         - findAndMatchClaudeProcesses() 
+        - logDuplicateMappings() 
         - scanAndMatchSessions(pids []int) 
 
         + SetMemoryScanner(scanner MemoryScannerInterface) 
@@ -1002,6 +1003,13 @@ namespace ui {
 namespace util {
 }
 namespace e2e {
+    class "ClaudeInstance" << (S,Aquamarine) >> {
+        + Pane *gotmux.Pane
+        + SessionID string
+        + PID int
+        + SessionFile string
+
+    }
     class "TestHarness" << (S,Aquamarine) >> {
         - t *testing.T
         - tmux *gotmux.Tmux
@@ -1011,6 +1019,8 @@ namespace e2e {
         - cleanupFuncs []<font color=blue>func</font>() 
 
         - addCleanup(f <font color=blue>func</font>() ) 
+        - listSessionFiles() []string
+        - getClaudePID(pane *gotmux.Pane) int
 
         + CreateSession(name string) *gotmux.Session
         + GetSession() *gotmux.Session
@@ -1024,7 +1034,15 @@ namespace e2e {
         + SendKeys(pane *gotmux.Pane, keys string) error
         + SendKeysEnter(pane *gotmux.Pane, keys string) error
         + CapturePane(pane *gotmux.Pane) string
+        + LogProof(t *testing.T, pane *gotmux.Pane, step string) string
         + Cleanup() 
+        + SpawnClaude(prompt string) *ClaudeInstance
+        + WaitForSessionFile(existingFiles []string, timeout time.Duration) string
+        + WaitForNewSession(instance *ClaudeInstance, timeout time.Duration) string
+        + SpawnDashboard(projectsDir string, args ...string) *gotmux.Pane
+        + AssertSessionStatus(t *testing.T, pane *gotmux.Pane, sessionID string, expectedStatus string, timeout time.Duration) 
+        + SendCommand(instance *ClaudeInstance, command string) error
+        + SendPrompt(instance *ClaudeInstance, prompt string) error
 
     }
 }
