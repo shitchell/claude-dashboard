@@ -248,6 +248,27 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 			m.sessionToPaneID[proc.SessionID] = proc.PaneID
 		}
 	}
+
+	// Log any duplicate mappings (same pane mapped to multiple sessions)
+	m.logDuplicateMappings()
+}
+
+// logDuplicateMappings logs a warning when multiple sessions are mapped to the same pane.
+// This indicates a potential bug in the session-to-pane matching logic, typically caused
+// by stale session data after operations like /clear that create new sessions.
+func (m *Matcher) logDuplicateMappings() {
+	// Build reverse mapping: pane ID -> list of session IDs
+	paneToSessions := make(map[string][]string)
+	for sessionID, paneID := range m.sessionToPaneID {
+		paneToSessions[paneID] = append(paneToSessions[paneID], sessionID)
+	}
+
+	// Log any panes with multiple sessions
+	for paneID, sessions := range paneToSessions {
+		if len(sessions) > 1 {
+			logging.Warn("BUG DETECTED: Pane %s mapped to multiple sessions: %v", paneID, sessions)
+		}
+	}
 }
 
 // scanAndMatchSessions performs memory scanning to match PIDs to session IDs.

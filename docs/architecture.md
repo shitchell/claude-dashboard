@@ -911,21 +911,30 @@ Model.Update(SessionSelectedMsg)
 
 **Key Components**:
 
-- **TestHarness**: E2E test orchestrator using gotmux library
+- **TestHarness**: E2E test orchestrator using gotmux library (streamlined API)
   - `CreateSession()`: Creates isolated tmux session
   - `RunDashboard()`: Launches dashboard binary in test pane
+  - `SpawnClaude()`: Spawns real Claude Code instance, returns `ClaudeInstance`
+  - `SpawnDashboard()`: Spawns dashboard in new window
   - `WaitForContent()`: Polls pane output for expected content
+  - `WaitForSessionFile()`: Detects new Claude session files
+  - `SnapshotSessionFiles()`: Captures session file list for comparison
+  - `WaitForSessionSince()`: Detects new sessions created after a snapshot
   - `SendKeys()`: Simulates keyboard input
+  - `LogProof()`: Captures and logs pane content as test evidence
   - `Cleanup()`: Tears down test resources
 
-- **E2E Tests**: `navigation_test.go`
-  - `TestDashboardStartup`: Verifies dashboard launches
-  - `TestBasicNavigation`: Tests j/k cursor movement
-  - `TestSearchMode`: Tests `/` search activation
-  - `TestQuitCommand`: Tests clean exit with `q`
-  - `TestHelpDisplay`: Tests `?` help screen
+- **ClaudeInstance**: Represents a spawned Claude Code process
+  - `Pane`: The tmux pane where Claude is running
+  - `SessionID`: Detected from session file after spawn
+  - `PID`: Process ID of the Claude process
+  - `SessionFile`: Path to the session's .jsonl file
 
-**Gating**: E2E tests require `CLAUDE_E2E_TESTS=1` environment variable
+- **E2E Tests**: `navigation_test.go`, `clear_scenario_test.go`
+  - Navigation tests: startup, j/k movement, search, quit, help
+  - `/clear` scenario: Tests session mapping after `/clear` command
+
+**Gating**: E2E tests are gated by build tags (`//go:build e2e`). Run with `go test -tags=e2e ./test/e2e/...`. Tests skip at runtime if `claude` CLI is not available.
 
 #### `testdata/` - Test Fixtures
 
