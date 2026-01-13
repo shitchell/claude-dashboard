@@ -759,12 +759,12 @@ func TestBuildNullPrefixedPatterns(t *testing.T) {
 func TestLogDuplicateMappingsNoDuplicates(t *testing.T) {
 	matcher := NewMatcher()
 
-	// Set up unique session-to-pane mappings (no duplicates)
+	// Set up unique session-to-pane mappings via claudeProcesses (no duplicates)
 	matcher.mu.Lock()
-	matcher.sessionToPaneID = map[string]string{
-		"session-1": "%0",
-		"session-2": "%1",
-		"session-3": "%2",
+	matcher.claudeProcesses = []ClaudeProcess{
+		{SessionID: "session-1", PaneID: "%0"},
+		{SessionID: "session-2", PaneID: "%1"},
+		{SessionID: "session-3", PaneID: "%2"},
 	}
 	matcher.mu.Unlock()
 
@@ -784,10 +784,10 @@ func TestLogDuplicateMappingsWithDuplicates(t *testing.T) {
 	// Set up mappings where multiple sessions point to the same pane
 	// This is the bug scenario that /clear can cause
 	matcher.mu.Lock()
-	matcher.sessionToPaneID = map[string]string{
-		"session-1": "%0",
-		"session-2": "%0", // Same pane - should trigger warning
-		"session-3": "%1",
+	matcher.claudeProcesses = []ClaudeProcess{
+		{SessionID: "session-1", PaneID: "%0"},
+		{SessionID: "session-2", PaneID: "%0"}, // Same pane - should trigger warning
+		{SessionID: "session-3", PaneID: "%1"},
 	}
 	matcher.mu.Unlock()
 
@@ -804,15 +804,15 @@ func TestLogDuplicateMappingsWithDuplicates(t *testing.T) {
 func TestLogDuplicateMappingsMultipleDuplicatePanes(t *testing.T) {
 	matcher := NewMatcher()
 
-	// Set up multiple panes with duplicate mappings
+	// Set up multiple panes with duplicate mappings via claudeProcesses
 	matcher.mu.Lock()
-	matcher.sessionToPaneID = map[string]string{
-		"session-1": "%0",
-		"session-2": "%0", // Pane %0 has 2 sessions
-		"session-3": "%1",
-		"session-4": "%1", // Pane %1 has 2 sessions
-		"session-5": "%1", // Pane %1 has 3 sessions
-		"session-6": "%2", // Pane %2 has only 1 session (no duplicate)
+	matcher.claudeProcesses = []ClaudeProcess{
+		{SessionID: "session-1", PaneID: "%0"},
+		{SessionID: "session-2", PaneID: "%0"}, // Pane %0 has 2 sessions
+		{SessionID: "session-3", PaneID: "%1"},
+		{SessionID: "session-4", PaneID: "%1"}, // Pane %1 has 2 sessions
+		{SessionID: "session-5", PaneID: "%1"}, // Pane %1 has 3 sessions
+		{SessionID: "session-6", PaneID: "%2"}, // Pane %2 has only 1 session (no duplicate)
 	}
 	matcher.mu.Unlock()
 
@@ -828,9 +828,9 @@ func TestLogDuplicateMappingsMultipleDuplicatePanes(t *testing.T) {
 func TestLogDuplicateMappingsEmptyMappings(t *testing.T) {
 	matcher := NewMatcher()
 
-	// Ensure empty mappings
+	// Ensure empty claudeProcesses
 	matcher.mu.Lock()
-	matcher.sessionToPaneID = make(map[string]string)
+	matcher.claudeProcesses = []ClaudeProcess{}
 	matcher.mu.Unlock()
 
 	// Call logDuplicateMappings - should complete without issue
@@ -869,15 +869,14 @@ func TestDuplicateMappingDetectionAfterRefresh(t *testing.T) {
 	}
 
 	// After refresh, logDuplicateMappings should have been called internally
-	// We verify the sessionToPaneID state
+	// We verify the claudeProcesses state
 	matcher.mu.RLock()
 	defer matcher.mu.RUnlock()
 
-	// Both sessions should map to the same pane %1 (from pts/43)
+	// Both processes should have pane %1 (from pts/43)
 	// This is a valid scenario where duplicate detection would log a warning
-	if len(matcher.sessionToPaneID) != 2 {
-		t.Logf("sessionToPaneID has %d entries: %v", len(matcher.sessionToPaneID), matcher.sessionToPaneID)
-	}
+	processCount := len(matcher.claudeProcesses)
+	t.Logf("claudeProcesses has %d entries", processCount)
 
 	t.Log("Duplicate detection is invoked during Refresh()")
 }
@@ -892,19 +891,21 @@ func TestSessionToPaneMappingAfterClearScenario(t *testing.T) {
 
 	matcher := NewMatcher()
 
-	// Simulate state BEFORE proper fix: both sessions point to same pane
+	// Simulate state BEFORE proper fix: both sessions point to same pane via claudeProcesses
 	matcher.mu.Lock()
-	matcher.sessionToPaneID = map[string]string{
-		"session-old-abc123": "%5",
-		"session-new-def456": "%5", // Bug: old session not cleaned up
+	matcher.claudeProcesses = []ClaudeProcess{
+		{SessionID: "session-old-abc123", PaneID: "%5"},
+		{SessionID: "session-new-def456", PaneID: "%5"}, // Bug: old session not cleaned up
 	}
 	matcher.mu.Unlock()
 
-	// Build reverse mapping to detect duplicates
+	// Build reverse mapping to detect duplicates from claudeProcesses
 	matcher.mu.RLock()
 	paneToSessions := make(map[string][]string)
-	for sessionID, paneID := range matcher.sessionToPaneID {
-		paneToSessions[paneID] = append(paneToSessions[paneID], sessionID)
+	for _, proc := range matcher.claudeProcesses {
+		if proc.SessionID != "" && proc.PaneID != "" {
+			paneToSessions[proc.PaneID] = append(paneToSessions[proc.PaneID], proc.SessionID)
+		}
 	}
 	matcher.mu.RUnlock()
 

@@ -229,10 +229,12 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 // This indicates a potential bug in the session-to-pane matching logic, typically caused
 // by stale session data after operations like /clear that create new sessions.
 func (m *Matcher) logDuplicateMappings() {
-	// Build reverse mapping: pane ID -> list of session IDs
+	// Build reverse mapping: pane ID -> list of session IDs from claudeProcesses
 	paneToSessions := make(map[string][]string)
-	for sessionID, paneID := range m.sessionToPaneID {
-		paneToSessions[paneID] = append(paneToSessions[paneID], sessionID)
+	for _, proc := range m.claudeProcesses {
+		if proc.SessionID != "" && proc.PaneID != "" {
+			paneToSessions[proc.PaneID] = append(paneToSessions[proc.PaneID], proc.SessionID)
+		}
 	}
 
 	// Log any panes with multiple sessions
