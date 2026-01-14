@@ -550,8 +550,9 @@ classDiagram
 - **MemoryScanner**: Scans process memory to find session IDs
   - Reads /proc/{pid}/maps and /proc/{pid}/mem
   - Uses NULL-prefixed patterns (\x00 + full path) to avoid false positives
-  - Only scans memory regions <= 256KB (V8's session path storage regions)
+  - Only scans exactly 256KB memory regions (V8's session path storage regions)
   - Filters to UUID-patterned session files (skips agent-*.jsonl)
+  - **ScanUntilMatch()**: Scans regions one-by-one with early exit on match
   - **ReadAllMemory()**: Reads all eligible regions into single buffer
   - **ScanAllPIDsForSessions()**: Main entry point for batch scanning
   - Used as sole source for PID-to-SessionID mapping (no CWD fallback)

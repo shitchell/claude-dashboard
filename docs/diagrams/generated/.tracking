@@ -1,5 +1,5 @@
 # Auto-generated tracking file for documentation diagrams
 # Maps source fingerprints to verified architecture state
-CLASSES_PUML_SHA256="5709bade72e0eca31c69c5c56de5eb07234eff68fdf9c9af13ede38f20452a46"
+CLASSES_PUML_SHA256="9c0f8939dda0e88217a11f05b99dc5826b0f5a32f8318b1625f499c3ba9e4c4b"
 CALLGRAPH_GV_FINGERPRINT="bf06cc24728028a8485820f99dfee21da3bc8814d4d59e4858669b58f07cb1e4"
-VERIFIED_AT="2026-01-13T23:47:02-05:00"
+VERIFIED_AT="2026-01-14T03:35:45-05:00"

@@ -73,7 +73,7 @@
 <!-- github.com/shitchell/claude&#45;dashboard.run -->
 <g id="node1" class="node">
 <title>github.com/shitchell/claude&#45;dashboard.run</title>
-<g id="a_node1"><a xlink:title="github.com/shitchell/claude&#45;dashboard.run | defined in main.go:39&#10;at main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]&#10;at main.go:50: calling [github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags]&#10;at main.go:72: calling [github.com/shitchell/claude&#45;dashboard/internal/config.Load]&#10;at main.go:97: calling [github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel]&#10;at main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]&#10;at main.go:45: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Close]&#10;at main.go:59: calling [fmt.Printf]&#10;at main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]&#10;at main.go:42: calling [fmt.Fprintf]&#10;at main.go:74: calling [fmt.Fprintf]&#10;at main.go:85: calling [fmt.Fprintf]&#10;at main.go:102: calling [fmt.Fprintf]&#10;at main.go:67: calling [github.com/shitchell/claude&#45;dashboard.printUsage]&#10;at main.go:83: calling [github.com/shitchell/claude&#45;dashboard/internal/session.NewService]&#10;at main.go:41: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Init]&#10;at main.go:47: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Info]">
+<g id="a_node1"><a xlink:title="github.com/shitchell/claude&#45;dashboard.run | defined in main.go:39&#10;at main.go:97: calling [github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel]&#10;at main.go:45: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Close]&#10;at main.go:83: calling [github.com/shitchell/claude&#45;dashboard/internal/session.NewService]&#10;at main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]&#10;at main.go:41: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Init]&#10;at main.go:42: calling [fmt.Fprintf]&#10;at main.go:74: calling [fmt.Fprintf]&#10;at main.go:85: calling [fmt.Fprintf]&#10;at main.go:102: calling [fmt.Fprintf]&#10;at main.go:50: calling [github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags]&#10;at main.go:67: calling [github.com/shitchell/claude&#45;dashboard.printUsage]&#10;at main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]&#10;at main.go:59: calling [fmt.Printf]&#10;at main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]&#10;at main.go:47: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Info]&#10;at main.go:72: calling [github.com/shitchell/claude&#45;dashboard/internal/config.Load]">
 <path fill="lightblue" stroke="black" stroke-width="0.5" d="M190,-375C190,-375 160,-375 160,-375 154,-375 148,-369 148,-363 148,-363 148,-351 148,-351 148,-345 154,-339 160,-339 160,-339 190,-339 190,-339 196,-339 202,-345 202,-351 202,-351 202,-363 202,-363 202,-369 196,-375 190,-375"/>
 <text text-anchor="middle" x="175" y="-353.3" font-family="Verdana" font-size="14.00">run</text>
 </a>
@@ -89,9 +89,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard.printUsage -->
-<g id="edge12" class="edge">
+<g id="edge10" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard.printUsage</title>
-<g id="a_edge12"><a xlink:title="at main.go:67: calling [github.com/shitchell/claude&#45;dashboard.printUsage]">
+<g id="a_edge10"><a xlink:title="at main.go:67: calling [github.com/shitchell/claude&#45;dashboard.printUsage]">
 <path fill="none" stroke="black" d="M177.65,-338.95C183.12,-282.68 202.4,-111.75 238,-71 249.03,-58.37 264.73,-50.05 280.51,-44.57"/>
 <polygon fill="black" stroke="black" points="281.8,-47.83 290.3,-41.51 279.71,-41.15 281.8,-47.83"/>
 </a>
@@ -107,9 +107,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;fmt.Fprintf -->
-<g id="edge11" class="edge">
+<g id="edge8" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;fmt.Fprintf</title>
-<g id="a_edge11"><a xlink:title="at main.go:42: calling [fmt.Fprintf]&#10;at main.go:74: calling [fmt.Fprintf]&#10;at main.go:85: calling [fmt.Fprintf]&#10;at main.go:102: calling [fmt.Fprintf]">
+<g id="a_edge8"><a xlink:title="at main.go:42: calling [fmt.Fprintf]&#10;at main.go:74: calling [fmt.Fprintf]&#10;at main.go:85: calling [fmt.Fprintf]&#10;at main.go:102: calling [fmt.Fprintf]">
 <path fill="none" stroke="saddlebrown" d="M176.58,-338.95C179.13,-292.89 192.92,-170.83 267,-117 298.17,-94.35 406.91,-97.52 469.39,-101.47"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="469.54,-104.99 479.75,-102.16 470,-98 469.54,-104.99"/>
 </a>
@@ -125,9 +125,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;fmt.Printf -->
-<g id="edge9" class="edge">
+<g id="edge12" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;fmt.Printf</title>
-<g id="a_edge9"><a xlink:title="at main.go:59: calling [fmt.Printf]">
+<g id="a_edge12"><a xlink:title="at main.go:59: calling [fmt.Printf]">
 <path fill="none" stroke="saddlebrown" d="M175.56,-338.88C175.45,-288.86 182.97,-148.8 267,-92 322.4,-54.56 349.39,-77.91 415,-65 434.5,-61.17 456.08,-56.64 474.15,-52.78"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="475.02,-56.17 484.06,-50.65 473.55,-49.33 475.02,-56.17"/>
 </a>
@@ -143,9 +143,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/charmbracelet/bubbletea.WithAltScreen -->
-<g id="edge10" class="edge">
+<g id="edge11" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/charmbracelet/bubbletea.WithAltScreen</title>
-<g id="a_edge10"><a xlink:title="at main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]">
+<g id="a_edge11"><a xlink:title="at main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]">
 <path fill="none" stroke="saddlebrown" d="M180.79,-338.91C190.96,-303.75 217.9,-225.63 267,-180 269.92,-177.28 273.12,-174.78 276.49,-172.49"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="278.46,-175.39 285.18,-167.19 274.82,-169.41 278.46,-175.39"/>
 </a>
@@ -161,9 +161,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/charmbracelet/bubbletea.NewProgram -->
-<g id="edge1" class="edge">
+<g id="edge14" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/charmbracelet/bubbletea.NewProgram</title>
-<g id="a_edge1"><a xlink:title="at main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]">
+<g id="a_edge14"><a xlink:title="at main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]">
 <path fill="none" stroke="saddlebrown" d="M186.12,-338.97C200.96,-313.96 230.83,-268.7 267,-241 270.83,-238.07 274.98,-235.36 279.29,-232.86"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="281.13,-235.84 288.3,-228.04 277.83,-229.67 281.13,-235.84"/>
 </a>
@@ -179,9 +179,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;(*github.com/charmbracelet/bubbletea.Program).Run -->
-<g id="edge7" class="edge">
+<g id="edge5" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;(*github.com/charmbracelet/bubbletea.Program).Run</title>
-<g id="a_edge7"><a xlink:title="at main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]">
+<g id="a_edge5"><a xlink:title="at main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]">
 <path fill="none" stroke="saddlebrown" d="M202.35,-343.18C227.7,-329.89 266.5,-309.54 296.45,-293.84"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="298.21,-296.87 305.44,-289.12 294.96,-290.67 298.21,-296.87"/>
 </a>
@@ -197,9 +197,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags -->
-<g id="edge4" class="edge">
+<g id="edge9" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags</title>
-<g id="a_edge4"><a xlink:title="at main.go:50: calling [github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags]">
+<g id="a_edge9"><a xlink:title="at main.go:50: calling [github.com/shitchell/claude&#45;dashboard/internal/config.ParseFlags]">
 <path fill="none" stroke="saddlebrown" d="M202.35,-357C223.47,-357 253.9,-357 280.79,-357"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="280.89,-360.5 290.89,-357 280.89,-353.5 280.89,-360.5"/>
 </a>
@@ -215,9 +215,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/config.Load -->
-<g id="edge5" class="edge">
+<g id="edge16" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/config.Load</title>
-<g id="a_edge5"><a xlink:title="at main.go:72: calling [github.com/shitchell/claude&#45;dashboard/internal/config.Load]">
+<g id="a_edge16"><a xlink:title="at main.go:72: calling [github.com/shitchell/claude&#45;dashboard/internal/config.Load]">
 <path fill="none" stroke="saddlebrown" d="M202.35,-366.8C229.39,-376.86 271.73,-392.61 302.31,-403.98"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="301.2,-407.3 311.79,-407.51 303.64,-400.74 301.2,-407.3"/>
 </a>
@@ -233,9 +233,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/logging.Init -->
-<g id="edge14" class="edge">
+<g id="edge7" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/logging.Init</title>
-<g id="a_edge14"><a xlink:title="at main.go:41: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Init]">
+<g id="a_edge7"><a xlink:title="at main.go:41: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Init]">
 <path fill="none" stroke="saddlebrown" d="M199.2,-375.14C202.99,-378.56 206.75,-382.25 210,-386 241.03,-421.76 230.37,-446 267,-476 277.69,-484.75 291.42,-490.97 304.08,-495.29"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="303.34,-498.73 313.93,-498.36 305.42,-492.04 303.34,-498.73"/>
 </a>
@@ -251,9 +251,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/logging.Close -->
-<g id="edge8" class="edge">
+<g id="edge3" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/logging.Close</title>
-<g id="a_edge8"><a xlink:title="at main.go:45: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Close]">
+<g id="a_edge3"><a xlink:title="at main.go:45: calling [github.com/shitchell/claude&#45;dashboard/internal/logging.Close]">
 <path fill="none" stroke="saddlebrown" d="M200.55,-375.28C204.02,-378.59 207.31,-382.2 210,-386 250.91,-443.91 217.48,-484.25 267,-535 272.11,-540.24 278.27,-544.6 284.82,-548.22"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="299.23,-557.97 309.81,-558.56 301.9,-551.5 299.23,-557.97"/>
 <polyline fill="none" stroke="saddlebrown" points="300.57,-554.74 295.95,-552.82 "/>
@@ -289,9 +289,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/session.NewService -->
-<g id="edge13" class="edge">
+<g id="edge4" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/session.NewService</title>
-<g id="a_edge13"><a xlink:title="at main.go:83: calling [github.com/shitchell/claude&#45;dashboard/internal/session.NewService]">
+<g id="a_edge4"><a xlink:title="at main.go:83: calling [github.com/shitchell/claude&#45;dashboard/internal/session.NewService]">
 <path fill="none" stroke="saddlebrown" d="M201.58,-375.18C204.82,-378.45 207.78,-382.08 210,-386 276.46,-503.33 178.98,-581.84 267,-684 270.46,-688.01 274.55,-691.45 279.02,-694.4"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="277.55,-697.59 287.98,-699.48 281.01,-691.5 277.55,-697.59"/>
 </a>
@@ -307,18 +307,18 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel -->
-<g id="edge6" class="edge">
+<g id="edge1" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.run&#45;&gt;github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel</title>
-<g id="a_edge6"><a xlink:title="at main.go:97: calling [github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel]">
+<g id="a_edge1"><a xlink:title="at main.go:97: calling [github.com/shitchell/claude&#45;dashboard/internal/ui.NewModel]">
 <path fill="none" stroke="saddlebrown" d="M201.78,-375.07C205,-378.36 207.9,-382.02 210,-386 290.58,-538.56 153.6,-639.96 267,-770 271.62,-775.29 277.35,-779.59 283.55,-783.08"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="282.39,-786.4 292.92,-787.63 285.45,-780.11 282.39,-786.4"/>
 </a>
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.printUsage&#45;&gt;fmt.Printf -->
-<g id="edge16" class="edge">
+<g id="edge13" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.printUsage&#45;&gt;fmt.Printf</title>
-<g id="a_edge16"><a xlink:title="at main.go:111: calling [fmt.Printf]">
+<g id="a_edge13"><a xlink:title="at main.go:111: calling [fmt.Printf]">
 <path fill="none" stroke="saddlebrown" d="M391.89,-36.89C418.1,-38.41 449.79,-40.25 474.38,-41.67"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="474.27,-45.17 484.45,-42.26 474.67,-38.19 474.27,-45.17"/>
 </a>
@@ -327,16 +327,16 @@
 <!-- github.com/shitchell/claude&#45;dashboard.main -->
 <g id="node3" class="node">
 <title>github.com/shitchell/claude&#45;dashboard.main</title>
-<g id="a_node3"><a xlink:title="github.com/shitchell/claude&#45;dashboard.main | defined in main.go:29&#10;at main.go:30: calling [github.com/shitchell/claude&#45;dashboard.run]&#10;at main.go:32: calling [os.Exit]">
+<g id="a_node3"><a xlink:title="github.com/shitchell/claude&#45;dashboard.main | defined in main.go:29&#10;at main.go:32: calling [os.Exit]&#10;at main.go:30: calling [github.com/shitchell/claude&#45;dashboard.run]">
 <path fill="lightblue" stroke="black" stroke-width="0.5" d="M63,-396C63,-396 28,-396 28,-396 22,-396 16,-390 16,-384 16,-384 16,-372 16,-372 16,-366 22,-360 28,-360 28,-360 63,-360 63,-360 69,-360 75,-366 75,-372 75,-372 75,-384 75,-384 75,-390 69,-396 63,-396"/>
 <text text-anchor="middle" x="45.5" y="-374.3" font-family="Verdana" font-size="14.00">main</text>
 </a>
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.main&#45;&gt;github.com/shitchell/claude&#45;dashboard.run -->
-<g id="edge2" class="edge">
+<g id="edge6" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.main&#45;&gt;github.com/shitchell/claude&#45;dashboard.run</title>
-<g id="a_edge2"><a xlink:title="at main.go:30: calling [github.com/shitchell/claude&#45;dashboard.run]">
+<g id="a_edge6"><a xlink:title="at main.go:30: calling [github.com/shitchell/claude&#45;dashboard.run]">
 <path fill="none" stroke="black" d="M75.11,-373.29C93.62,-370.24 117.87,-366.24 137.73,-362.97"/>
 <polygon fill="black" stroke="black" points="138.36,-366.42 147.65,-361.34 137.22,-359.51 138.36,-366.42"/>
 </a>
@@ -352,9 +352,9 @@
 </g>
 </g>
 <!-- github.com/shitchell/claude&#45;dashboard.main&#45;&gt;os.Exit -->
-<g id="edge3" class="edge">
+<g id="edge2" class="edge">
 <title>github.com/shitchell/claude&#45;dashboard.main&#45;&gt;os.Exit</title>
-<g id="a_edge3"><a xlink:title="at main.go:32: calling [os.Exit]">
+<g id="a_edge2"><a xlink:title="at main.go:32: calling [os.Exit]">
 <path fill="none" stroke="saddlebrown" d="M75.11,-386.98C93.7,-392.81 118.09,-400.46 138,-406.71"/>
 <polygon fill="saddlebrown" stroke="saddlebrown" points="137.07,-410.08 147.65,-409.73 139.16,-403.4 137.07,-410.08"/>
 </a>

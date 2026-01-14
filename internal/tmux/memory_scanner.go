@@ -86,8 +86,8 @@ func (ms *MemoryScanner) ScanForPatterns(patterns [][]byte) map[string]int {
 	var totalBytes int64
 	for _, region := range regions {
 		size := region.End - region.Start
-		if size > MaxRegionSize {
-			continue // Skip regions larger than 256KB
+		if size != MaxRegionSize {
+			continue // Only scan exactly 256KB regions
 		}
 
 		counts, err := ms.scanRegion(memFile, region, patterns)
@@ -131,12 +131,12 @@ func (ms *MemoryScanner) ReadAllMemory() ([]byte, error) {
 	var regionCount int
 	for _, region := range regions {
 		size := region.End - region.Start
-		if size <= MaxRegionSize {
+		if size == MaxRegionSize {
 			totalSize += int64(size)
 			regionCount++
 		}
 	}
-	logging.Debug("PID %d: Found %d regions (<= 256KB) totaling %d bytes", ms.pid, regionCount, totalSize)
+	logging.Debug("PID %d: Found %d regions (exactly 256KB) totaling %d bytes", ms.pid, regionCount, totalSize)
 
 	// Allocate buffer
 	buffer := make([]byte, 0, totalSize)
@@ -145,7 +145,7 @@ func (ms *MemoryScanner) ReadAllMemory() ([]byte, error) {
 	// Read each region
 	for _, region := range regions {
 		size := region.End - region.Start
-		if size > MaxRegionSize {
+		if size != MaxRegionSize {
 			continue
 		}
 
@@ -166,6 +166,82 @@ func (ms *MemoryScanner) ReadAllMemory() ([]byte, error) {
 
 	logging.Debug("PID %d: Read %d bytes of memory", ms.pid, len(buffer))
 	return buffer, nil
+}
+
+// ScanUntilMatch reads exactly 256KB regions one at a time, checking for pattern matches.
+// Returns (sessionID, true) on first match, avoiding unnecessary memory reads.
+// This implements the early exit optimization: once a session pattern is found,
+// remaining regions are not read.
+func (ms *MemoryScanner) ScanUntilMatch(patterns map[string][]byte) (string, bool) {
+	if len(patterns) == 0 {
+		return "", false
+	}
+
+	// Read memory maps
+	regions, err := ms.readMemoryMaps()
+	if err != nil {
+		logging.Debug("ScanUntilMatch PID %d: Failed to read memory maps: %v", ms.pid, err)
+		return "", false
+	}
+
+	// Open mem file
+	memPath := fmt.Sprintf("/proc/%d/mem", ms.pid)
+	memFile, err := os.Open(memPath)
+	if err != nil {
+		logging.Debug("ScanUntilMatch PID %d: Failed to open memory file: %v", ms.pid, err)
+		return "", false
+	}
+	defer memFile.Close()
+
+	// Pre-allocate a single buffer for reading regions
+	readBuf := make([]byte, MaxRegionSize)
+
+	// Count total and filtered regions for logging
+	var totalRegions, scannedRegions int
+	for _, region := range regions {
+		size := region.End - region.Start
+		if size == MaxRegionSize {
+			totalRegions++
+		}
+	}
+
+	logging.Debug("ScanUntilMatch PID %d: %d exactly-256KB regions to scan", ms.pid, totalRegions)
+
+	// Scan each exactly-256KB region until a match is found
+	for _, region := range regions {
+		size := region.End - region.Start
+		if size != MaxRegionSize {
+			continue // Only scan exactly 256KB regions
+		}
+
+		scannedRegions++
+
+		// Seek to region start
+		_, err := memFile.Seek(int64(region.Start), io.SeekStart)
+		if err != nil {
+			continue // Skip regions we can't seek to
+		}
+
+		// Read region data
+		n, err := memFile.Read(readBuf[:size])
+		if err != nil && !errors.Is(err, io.EOF) {
+			continue // Skip regions we can't read
+		}
+
+		regionData := readBuf[:n]
+
+		// Check all patterns against this region
+		for sessionID, pattern := range patterns {
+			if bytes.Contains(regionData, pattern) {
+				logging.Info("ScanUntilMatch PID %d: MATCH! Found session %s in region %d/%d",
+					ms.pid, sessionID, scannedRegions, totalRegions)
+				return sessionID, true
+			}
+		}
+	}
+
+	logging.Debug("ScanUntilMatch PID %d: No match found after scanning %d regions", ms.pid, scannedRegions)
+	return "", false
 }
 
 // readMemoryMaps parses /proc/<pid>/maps and returns readable, writable, private anonymous regions.
@@ -355,6 +431,9 @@ func BuildNullPrefixedPatterns(sessionPaths []string) map[string][]byte {
 // MatchPIDToSessionNullPrefix scans a process using NULL-prefixed patterns
 // and returns the session ID if found. This is the primary matching method.
 //
+// Uses ScanUntilMatch for early exit optimization: scanning stops as soon as
+// a session pattern is found, avoiding unnecessary memory reads.
+//
 // Returns (sessionID, true) if a match is found, ("", false) otherwise.
 func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) {
 	if len(sessionPaths) == 0 {
@@ -370,42 +449,9 @@ func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) 
 	}
 	logging.Debug("PID %d: Built %d NULL-prefixed patterns from %d paths", pid, len(patterns), len(sessionPaths))
 
-	// Read all memory once
+	// Use ScanUntilMatch for early exit optimization
 	scanner := NewMemoryScanner(pid)
-	buffer, err := scanner.ReadAllMemory()
-	if err != nil {
-		logging.Debug("PID %d: Failed to read memory: %v", pid, err)
-		return "", false
-	}
-	logging.Debug("PID %d: Read %d bytes of memory", pid, len(buffer))
-
-	// Search for each pattern in the buffer - use exact same variable for logging and searching
-	patternCount := 0
-	for sessionID, pattern := range patterns {
-		// Log what we're searching for (first 3 patterns)
-		if patternCount < 3 {
-			logging.Debug("PID %d: Searching for pattern[%d]: sessionID=%s len=%d bytes=%q",
-				pid, patternCount, sessionID, len(pattern), pattern)
-		}
-		patternCount++
-
-		// Search using the EXACT same pattern variable
-		if bytes.Contains(buffer, pattern) {
-			logging.Info("PID %d: MATCH! Found pattern in memory: sessionID=%s pattern=%q", pid, sessionID, pattern)
-			return sessionID, true
-		}
-	}
-
-	// Debug: check if paths exist without NULL prefix (to diagnose NULL issue)
-	for sessionID, pattern := range patterns {
-		pathOnly := pattern[1:] // Skip the NULL byte
-		if bytes.Contains(buffer, pathOnly) {
-			logging.Debug("PID %d: Found path WITHOUT NULL prefix: sessionID=%s path=%s", pid, sessionID, string(pathOnly))
-		}
-	}
-
-	logging.Debug("PID %d: No session match found in %d bytes, checked %d patterns", pid, len(buffer), len(patterns))
-	return "", false
+	return scanner.ScanUntilMatch(patterns)
 }
 
 // ScanAllPIDsForSessions scans multiple PIDs and returns a map of PID -> sessionID.

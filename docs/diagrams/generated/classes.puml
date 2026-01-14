@@ -554,6 +554,7 @@ namespace tmux {
 
         + ScanForPatterns(patterns [][]byte) <font color=blue>map</font>[string]int
         + ReadAllMemory() ([]byte, error)
+        + ScanUntilMatch(patterns <font color=blue>map</font>[string][]byte) (string, bool)
 
     }
     interface "MemoryScannerInterface"  {
@@ -1110,6 +1111,48 @@ namespace helpers {
 }
 namespace cmd {
     namespace debug-matcher {
+    }
+}
+namespace memtest {
+    class "iovec" << (S,Aquamarine) >> {
+        + Base *byte
+        + Len uint64
+
+    }
+    class "region" << (S,Aquamarine) >> {
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
+
+    }
+    class "result" << (S,Aquamarine) >> {
+        - pid int
+        - regions int
+        - bytes int64
+        - duration time.Duration
+        - err error
+
     }
 }
 "__builtin__.int" #.. "claude-dashboard.internal.config.ColumnType"
