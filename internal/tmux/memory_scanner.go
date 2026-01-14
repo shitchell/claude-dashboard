@@ -16,7 +16,7 @@ import (
 
 // MaxRegionSize is the maximum size of a memory region to scan (256KB).
 // V8 stores session file paths in 256KB anonymous rw-p regions.
-// Limiting to this size dramatically improves performance while maintaining reliability.
+// Regions larger than this are skipped.
 const MaxRegionSize = 256 * 1024
 
 // UUIDPattern matches UUID-formatted session IDs in filenames.
@@ -128,12 +128,15 @@ func (ms *MemoryScanner) ReadAllMemory() ([]byte, error) {
 
 	// Pre-calculate total size to allocate buffer once
 	var totalSize int64
+	var regionCount int
 	for _, region := range regions {
 		size := region.End - region.Start
 		if size <= MaxRegionSize {
 			totalSize += int64(size)
+			regionCount++
 		}
 	}
+	logging.Debug("PID %d: Found %d regions (<= 256KB) totaling %d bytes", ms.pid, regionCount, totalSize)
 
 	// Allocate buffer
 	buffer := make([]byte, 0, totalSize)
@@ -165,7 +168,8 @@ func (ms *MemoryScanner) ReadAllMemory() ([]byte, error) {
 	return buffer, nil
 }
 
-// readMemoryMaps parses /proc/<pid>/maps and returns readable regions.
+// readMemoryMaps parses /proc/<pid>/maps and returns readable, writable, private anonymous regions.
+// V8 stores session file paths in anonymous rw-p regions.
 func (ms *MemoryScanner) readMemoryMaps() ([]MemoryRegion, error) {
 	mapsPath := fmt.Sprintf("/proc/%d/maps", ms.pid)
 	file, err := os.Open(mapsPath)
@@ -184,8 +188,13 @@ func (ms *MemoryScanner) readMemoryMaps() ([]MemoryRegion, error) {
 			continue // Skip malformed lines
 		}
 
-		// Only include readable regions
-		if !strings.Contains(region.Perms, "r") {
+		// Only include rw-p (read-write private) regions - this is where V8 stores session paths
+		if region.Perms != "rw-p" {
+			continue
+		}
+
+		// Only include anonymous regions (no path, or [heap], [stack], [anon:*])
+		if region.Path != "" && !strings.HasPrefix(region.Path, "[") {
 			continue
 		}
 
@@ -281,22 +290,6 @@ func ScanProcessMemory(pid int, patterns [][]byte) map[string]int {
 	return scanner.ScanForPatterns(patterns)
 }
 
-// FindBestMatch finds the pattern with the highest occurrence count.
-// Returns the pattern string and its count, or ("", 0) if no matches.
-func FindBestMatch(counts map[string]int) (string, int) {
-	var bestPattern string
-	var bestCount int
-
-	for pattern, count := range counts {
-		if count > bestCount {
-			bestPattern = pattern
-			bestCount = count
-		}
-	}
-
-	return bestPattern, bestCount
-}
-
 // IsUUIDSessionFile returns true if the session ID matches UUID format.
 // This filters out agent-*.jsonl files which don't have UUID session IDs.
 func IsUUIDSessionFile(sessionID string) bool {
@@ -359,58 +352,23 @@ func BuildNullPrefixedPatterns(sessionPaths []string) map[string][]byte {
 	return patterns
 }
 
-// BuildSessionPatterns creates search patterns from session file paths.
-// DEPRECATED: Use BuildNullPrefixedPatterns instead for reliable matching.
-//
-// The pattern format is "<project-dir>/<session-id>" where project-dir
-// is the encoded directory name (e.g., "-home-guy" for "/home/guy").
-//
-// Example:
-//
-//	filepath: "/home/guy/.claude/projects/-home-guy/abc123.jsonl"
-//	pattern:  "-home-guy/abc123"
-func BuildSessionPatterns(sessionPaths []string) map[string][]byte {
-	patterns := make(map[string][]byte)
-
-	for _, path := range sessionPaths {
-		// Extract session ID and project dir from path
-		// Path format: /home/user/.claude/projects/<project-dir>/<session-id>.jsonl
-		parts := strings.Split(path, "/")
-		if len(parts) < 2 {
-			continue
-		}
-
-		// Get filename and remove .jsonl extension
-		filename := parts[len(parts)-1]
-		sessionID := strings.TrimSuffix(filename, ".jsonl")
-
-		// Get project directory name (parent of the file)
-		projectDir := parts[len(parts)-2]
-
-		// Build pattern: "<project-dir>/<session-id>"
-		pattern := projectDir + "/" + sessionID
-		patterns[sessionID] = []byte(pattern)
-
-		logging.Debug("Built pattern for session %s: %s", sessionID, pattern)
-	}
-
-	return patterns
-}
-
 // MatchPIDToSessionNullPrefix scans a process using NULL-prefixed patterns
 // and returns the session ID if found. This is the primary matching method.
 //
 // Returns (sessionID, true) if a match is found, ("", false) otherwise.
 func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) {
 	if len(sessionPaths) == 0 {
+		logging.Debug("PID %d: No session paths provided", pid)
 		return "", false
 	}
 
 	// Build NULL-prefixed patterns
 	patterns := BuildNullPrefixedPatterns(sessionPaths)
 	if len(patterns) == 0 {
+		logging.Debug("PID %d: No UUID patterns built from %d paths", pid, len(sessionPaths))
 		return "", false
 	}
+	logging.Debug("PID %d: Built %d NULL-prefixed patterns from %d paths", pid, len(patterns), len(sessionPaths))
 
 	// Read all memory once
 	scanner := NewMemoryScanner(pid)
@@ -419,49 +377,35 @@ func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) 
 		logging.Debug("PID %d: Failed to read memory: %v", pid, err)
 		return "", false
 	}
+	logging.Debug("PID %d: Read %d bytes of memory", pid, len(buffer))
 
-	// Search for each pattern in the buffer
+	// Search for each pattern in the buffer - use exact same variable for logging and searching
+	patternCount := 0
 	for sessionID, pattern := range patterns {
+		// Log what we're searching for (first 3 patterns)
+		if patternCount < 3 {
+			logging.Debug("PID %d: Searching for pattern[%d]: sessionID=%s len=%d bytes=%q",
+				pid, patternCount, sessionID, len(pattern), pattern)
+		}
+		patternCount++
+
+		// Search using the EXACT same pattern variable
 		if bytes.Contains(buffer, pattern) {
-			logging.Debug("PID %d: Found NULL-prefixed match for session %s", pid, sessionID)
+			logging.Info("PID %d: MATCH! Found pattern in memory: sessionID=%s pattern=%q", pid, sessionID, pattern)
 			return sessionID, true
 		}
 	}
 
-	logging.Debug("PID %d: No session match found", pid)
+	// Debug: check if paths exist without NULL prefix (to diagnose NULL issue)
+	for sessionID, pattern := range patterns {
+		pathOnly := pattern[1:] // Skip the NULL byte
+		if bytes.Contains(buffer, pathOnly) {
+			logging.Debug("PID %d: Found path WITHOUT NULL prefix: sessionID=%s path=%s", pid, sessionID, string(pathOnly))
+		}
+	}
+
+	logging.Debug("PID %d: No session match found in %d bytes, checked %d patterns", pid, len(buffer), len(patterns))
 	return "", false
-}
-
-// MatchPIDToSession scans a process and determines which session it is running.
-// DEPRECATED: Use MatchPIDToSessionNullPrefix for more reliable matching.
-// Returns the session ID with the highest occurrence count, or "" if no match.
-func MatchPIDToSession(pid int, sessionPatterns map[string][]byte) (string, int) {
-	if len(sessionPatterns) == 0 {
-		return "", 0
-	}
-
-	// Convert patterns map to slice for scanning
-	var patterns [][]byte
-	patternToSessionID := make(map[string]string)
-
-	for sessionID, pattern := range sessionPatterns {
-		patterns = append(patterns, pattern)
-		patternToSessionID[string(pattern)] = sessionID
-	}
-
-	// Scan process memory
-	counts := ScanProcessMemory(pid, patterns)
-
-	// Find best match
-	bestPattern, bestCount := FindBestMatch(counts)
-	if bestCount == 0 {
-		return "", 0
-	}
-
-	sessionID := patternToSessionID[bestPattern]
-	logging.Debug("PID %d matched to session %s (count: %d)", pid, sessionID, bestCount)
-
-	return sessionID, bestCount
 }
 
 // ScanAllPIDsForSessions scans multiple PIDs and returns a map of PID -> sessionID.

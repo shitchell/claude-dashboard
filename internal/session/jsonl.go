@@ -186,9 +186,9 @@ type ToolUseResult struct {
 	IsImage     bool   `json:"isImage,omitempty"`
 
 	// Sub-agent results
-	AgentID     string        `json:"agentId,omitempty"`
-	TotalTokens int           `json:"totalTokens,omitempty"`
-	AgentContent []interface{} `json:"content,omitempty"` // Note: overlaps with Content for file ops
+	AgentID      string        `json:"agentId,omitempty"`
+	TotalTokens  int           `json:"totalTokens,omitempty"`
+	AgentContent []interface{} `json:"agentContent,omitempty"` // Sub-agent content blocks
 }
 
 // AssistantLine represents an assistant message in the JSONL.

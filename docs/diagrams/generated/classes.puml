@@ -512,6 +512,7 @@ namespace tmux {
     }
     class "Matcher" << (S,Aquamarine) >> {
         - mu sync.RWMutex
+        - refreshing bool
         - paneMap *PaneMap
         - processList *ProcessList
         - claudeProcesses []ClaudeProcess

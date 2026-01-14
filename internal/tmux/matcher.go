@@ -3,6 +3,7 @@ package tmux
 import (
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -29,6 +30,10 @@ var ResumeSessionIDRegex = regexp.MustCompile(`(?:--resume[=\s]|-r[=\s])([a-zA-Z
 //  4. Derive session-to-pane mapping on-the-fly via PID -> TTY -> pane
 type Matcher struct {
 	mu sync.RWMutex
+
+	// refreshing indicates if a refresh is currently in progress.
+	// This prevents concurrent refreshes which cause race conditions.
+	refreshing bool
 
 	// paneMap maps TTYs to tmux panes.
 	paneMap *PaneMap
@@ -116,7 +121,25 @@ func (m *Matcher) SetSessionFilePaths(paths []string) {
 // 4. Memory scans Claude PIDs to find session IDs
 //
 // Returns an error if either tmux or process discovery fails.
+// Returns nil immediately if a refresh is already in progress.
 func (m *Matcher) Refresh() error {
+	// Check if refresh is already in progress
+	m.mu.Lock()
+	if m.refreshing {
+		m.mu.Unlock()
+		logging.Info("Matcher.Refresh: Skipping - refresh already in progress")
+		return nil
+	}
+	m.refreshing = true
+	m.mu.Unlock()
+
+	// Ensure we clear the flag when done
+	defer func() {
+		m.mu.Lock()
+		m.refreshing = false
+		m.mu.Unlock()
+	}()
+
 	logging.Info("Matcher.Refresh: Starting refresh...")
 
 	// Discover tmux panes
@@ -156,7 +179,9 @@ func (m *Matcher) Refresh() error {
 
 // findAndMatchClaudeProcesses identifies Claude processes and matches them to sessions.
 func (m *Matcher) findAndMatchClaudeProcesses() {
+	logging.Info("findAndMatchClaudeProcesses: ENTERING")
 	m.mu.Lock()
+	logging.Info("findAndMatchClaudeProcesses: GOT LOCK")
 	defer m.mu.Unlock()
 
 	// Clear previous state
@@ -205,11 +230,17 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 		claudePIDs = append(claudePIDs, proc.PID)
 	}
 
-	logging.Info("findAndMatchClaudeProcesses: Found %d Claude processes", len(m.claudeProcesses))
+	logging.Info("findAndMatchClaudeProcesses: Found %d Claude processes, %d session paths available",
+		len(m.claudeProcesses), len(m.sessionFilePaths))
 
 	// Second pass: memory scanning to match PIDs to sessions
 	if len(m.sessionFilePaths) > 0 && len(claudePIDs) > 0 {
+		logging.Info("findAndMatchClaudeProcesses: Starting memory scan for %d PIDs", len(claudePIDs))
 		m.scanAndMatchSessions(claudePIDs)
+		logging.Info("findAndMatchClaudeProcesses: Memory scan complete, pidToSessionID=%d", len(m.pidToSessionID))
+	} else {
+		logging.Info("findAndMatchClaudeProcesses: SKIPPING memory scan (sessionPaths=%d, claudePIDs=%d)",
+			len(m.sessionFilePaths), len(claudePIDs))
 	}
 
 	// Third pass: update ClaudeProcess structs with session IDs from memory scan
@@ -330,13 +361,17 @@ func (m *Matcher) HasRunningProcess(sess *session.Session) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	logging.Info("HasRunningProcess: checking sess.ID=%s, pidToSessionID has %d entries", sess.ID, len(m.pidToSessionID))
+
 	// Check if any PID owns this session
-	for _, sessionID := range m.pidToSessionID {
+	for pid, sessionID := range m.pidToSessionID {
 		if sessionID == sess.ID {
+			logging.Info("HasRunningProcess: FOUND - PID %d owns session %s", pid, sess.ID)
 			return true
 		}
 	}
 
+	logging.Debug("HasRunningProcess: NOT FOUND - session %s not in pidToSessionID", sess.ID)
 	return false
 }
 
@@ -447,7 +482,7 @@ func (m *Matcher) FindProcessesByCWD(cwd string) []ClaudeProcess {
 // String returns a description of the ClaudeProcess for debugging.
 func (cp *ClaudeProcess) String() string {
 	var parts []string
-	parts = append(parts, "PID="+strings.TrimSpace(string(rune(cp.PID))))
+	parts = append(parts, "PID="+strconv.Itoa(cp.PID))
 
 	if cp.SessionID != "" {
 		parts = append(parts, "session="+cp.SessionID)

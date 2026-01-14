@@ -179,6 +179,7 @@ classDiagram
     }
 
     class Matcher {
+        -refreshing bool
         -paneMap *PaneMap
         -processList *ProcessList
         -claudeProcesses []ClaudeProcess
@@ -513,6 +514,7 @@ classDiagram
   - Maintains PaneMap and ProcessList
   - Uses memory scanning as sole source for session-to-PID mapping
   - Session-to-pane derived on-the-fly: sessionID -> PID -> TTY -> pane
+  - Uses `refreshing` flag to prevent concurrent refresh cycles (memory scanning is slow)
   - **Refresh()**: Updates all mappings (panes, processes, memory scan)
   - **MatchSessionToPane()**: Finds pane for session via PID lookup
   - **HasRunningProcess()**: Checks if session is owned by a PID

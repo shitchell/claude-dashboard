@@ -177,9 +177,10 @@ func UpdateAllSessionStatuses(
 	matcher *Matcher,
 	parser *session.Parser,
 ) {
-	logging.Debug("Updating status for %d sessions", len(sessions))
+	logging.Info("UpdateAllSessionStatuses: Updating status for %d sessions", len(sessions))
 
-	// Refresh matcher state once
+	// Refresh matcher state once (this does memory scanning which is slow)
+	logging.Info("UpdateAllSessionStatuses: Starting matcher refresh...")
 	if err := matcher.Refresh(); err != nil {
 		// If refresh fails, mark all sessions as exited
 		// (we can't determine their actual status)
@@ -192,6 +193,7 @@ func UpdateAllSessionStatuses(
 		}
 		return
 	}
+	logging.Info("UpdateAllSessionStatuses: Matcher refresh complete")
 
 	// Update each session
 	activeCount := 0
