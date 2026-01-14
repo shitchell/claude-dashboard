@@ -2,6 +2,8 @@ package tmux
 
 import (
 	"bytes"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/shitchell/claude-dashboard/internal/session"
@@ -787,6 +789,52 @@ func TestCausality_ExactSizeComparison(t *testing.T) {
 	}
 	if !exactPasses {
 		t.Error("Exact 256KB size should pass the filter")
+	}
+}
+
+// TestCausality_SourceCodeExactFilter verifies the source code uses exact equality.
+// This test parses the memory_scanner.go source to ensure the filter uses != or ==
+// rather than < or <=. It will FAIL if someone reverts to the old `> MaxRegionSize` check.
+func TestCausality_SourceCodeExactFilter(t *testing.T) {
+	// Read the source file
+	sourceFile := "memory_scanner.go"
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read source file %s: %v", sourceFile, err)
+	}
+
+	source := string(content)
+
+	// Count occurrences of the exact filter pattern (size != MaxRegionSize or size == MaxRegionSize)
+	exactFilterCount := strings.Count(source, "size != MaxRegionSize") +
+		strings.Count(source, "size == MaxRegionSize")
+
+	// Count occurrences of the OLD inequality patterns that should NOT be present
+	oldFilterPatterns := []string{
+		"size > MaxRegionSize",
+		"size < MaxRegionSize",
+		"size <= MaxRegionSize",
+		"size >= MaxRegionSize",
+	}
+
+	for _, pattern := range oldFilterPatterns {
+		if strings.Contains(source, pattern) {
+			t.Errorf("Found deprecated filter pattern %q in source code. "+
+				"Should use exact comparison (== or !=) instead", pattern)
+		}
+	}
+
+	// Verify we have at least 3 exact filter usages:
+	// 1. ScanForPatterns: line 89 (if size != MaxRegionSize)
+	// 2. ReadAllMemory pre-calculate: line 134 (if size == MaxRegionSize)
+	// 3. ReadAllMemory read loop: line 148 (if size != MaxRegionSize)
+	// 4. ScanUntilMatch count loop: line 203 (if size == MaxRegionSize)
+	// 5. ScanUntilMatch scan loop: line 213 (if size != MaxRegionSize)
+	expectedMinCount := 5
+	if exactFilterCount < expectedMinCount {
+		t.Errorf("Found only %d exact filter usages (size == or != MaxRegionSize), "+
+			"expected at least %d. Implementation may have been reverted.",
+			exactFilterCount, expectedMinCount)
 	}
 }
 
