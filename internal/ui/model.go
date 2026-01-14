@@ -312,6 +312,13 @@ func (m Model) updateStatusCmd(sessions []*session.Session) tea.Cmd {
 			return statusUpdatedMsg{Sessions: sessions, Error: nil}
 		}
 
+		// Set session file paths for memory scanning BEFORE refresh
+		if m.service != nil {
+			paths := m.service.GetSessionFilePaths()
+			m.matcher.SetSessionFilePaths(paths)
+			logging.Info("updateStatusCmd: Set %d session paths on matcher", len(paths))
+		}
+
 		// Get the parser from the service for status determination
 		var parser *session.Parser
 		if m.service != nil {
@@ -319,7 +326,7 @@ func (m Model) updateStatusCmd(sessions []*session.Session) tea.Cmd {
 		}
 
 		// Update all session statuses
-		logging.Debug("Updating session statuses via tmux matcher")
+		logging.Info("updateStatusCmd: Updating session statuses via tmux matcher")
 		tmux.UpdateAllSessionStatuses(sessions, m.matcher, parser)
 
 		return statusUpdatedMsg{Sessions: sessions, Error: nil}
@@ -348,17 +355,22 @@ func (m Model) tickCmd() tea.Cmd {
 // This updates the session-to-pane mapping for navigation.
 func (m Model) refreshMatcherCmd() tea.Cmd {
 	return func() tea.Msg {
+		logging.Info("refreshMatcherCmd: CALLED, matcher=%v, service=%v", m.matcher != nil, m.service != nil)
 		if m.matcher == nil {
+			logging.Info("refreshMatcherCmd: matcher is nil, skipping")
 			return matcherRefreshedMsg{Error: nil}
 		}
 
-		logging.Debug("Starting background matcher refresh...")
+		logging.Info("refreshMatcherCmd: Starting background matcher refresh...")
 
 		// Set session file paths for memory scanning
 		if m.service != nil {
 			paths := m.service.GetSessionFilePaths()
+			logging.Info("GetSessionFilePaths returned %d paths", len(paths))
 			m.matcher.SetSessionFilePaths(paths)
-			logging.Debug("Set %d session paths for matcher", len(paths))
+			logging.Info("Set %d session paths for matcher", len(paths))
+		} else {
+			logging.Info("m.service is nil, cannot get session file paths")
 		}
 
 		// Refresh the matcher (this does memory scanning)

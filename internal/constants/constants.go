@@ -39,7 +39,8 @@ const (
 const (
 	// DefaultRefreshInterval is the default time between automatic
 	// session list refreshes.
-	DefaultRefreshInterval = 5 * time.Second
+	// TODO: Reduce once memory scanning is optimized
+	DefaultRefreshInterval = 60 * time.Second
 
 	// MinRefreshInterval is the minimum allowed refresh interval
 	// to prevent excessive disk reads.

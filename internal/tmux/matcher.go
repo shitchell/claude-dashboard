@@ -3,6 +3,7 @@ package tmux
 import (
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,10 +21,19 @@ var ClaudeProcessRegex = regexp.MustCompile(`(?:^|/)claude(?:\s|$)`)
 var ResumeSessionIDRegex = regexp.MustCompile(`(?:--resume[=\s]|-r[=\s])([a-zA-Z0-9_-]+)`)
 
 // Matcher coordinates process discovery and session-to-pane matching.
-// It maintains the state needed to match Claude sessions to their
-// running tmux panes.
+// It uses memory scanning as the primary method to map PIDs to sessions.
+//
+// The simplified flow:
+//  1. Discover tmux panes (paneID -> Pane with TTY)
+//  2. Discover Claude processes (PID -> Process with TTY)
+//  3. Memory scan PIDs to find session IDs (PID -> sessionID)
+//  4. Derive session-to-pane mapping on-the-fly via PID -> TTY -> pane
 type Matcher struct {
 	mu sync.RWMutex
+
+	// refreshing indicates if a refresh is currently in progress.
+	// This prevents concurrent refreshes which cause race conditions.
+	refreshing bool
 
 	// paneMap maps TTYs to tmux panes.
 	paneMap *PaneMap
@@ -34,17 +44,9 @@ type Matcher struct {
 	// claudeProcesses contains only Claude-related processes.
 	claudeProcesses []ClaudeProcess
 
-	// sessionToPaneID caches the mapping of session IDs to pane IDs.
-	sessionToPaneID map[string]string
-
-	// pidToSessionID caches the mapping of PIDs to session IDs.
-	// This is populated by memory scanning and is the primary
-	// source for session-to-pane matching.
+	// pidToSessionID maps PIDs to session IDs (from memory scanning).
+	// This is the primary source for session-to-pane matching.
 	pidToSessionID map[int]string
-
-	// cwdToPanes caches the mapping of CWDs to pane IDs.
-	// Multiple processes can share the same CWD, so we store a slice.
-	cwdToPanes map[string][]string
 
 	// sessionFilePaths holds the paths to all known session files.
 	// Used for memory scanning to match PIDs to sessions.
@@ -67,9 +69,7 @@ func NewMatcher() *Matcher {
 		paneMap:          NewPaneMap(),
 		processList:      NewProcessList(),
 		claudeProcesses:  make([]ClaudeProcess, 0),
-		sessionToPaneID:  make(map[string]string),
 		pidToSessionID:   make(map[int]string),
-		cwdToPanes:       make(map[string][]string),
 		sessionFilePaths: make([]string, 0),
 	}
 }
@@ -81,9 +81,7 @@ func NewMatcherWithRunners(processRunner ProcessRunner, tmuxRunner CommandRunner
 		paneMap:          NewPaneMapWithRunner(tmuxRunner),
 		processList:      NewProcessListWithRunner(processRunner),
 		claudeProcesses:  make([]ClaudeProcess, 0),
-		sessionToPaneID:  make(map[string]string),
 		pidToSessionID:   make(map[int]string),
-		cwdToPanes:       make(map[string][]string),
 		sessionFilePaths: make([]string, 0),
 		processRunner:    processRunner,
 		tmuxRunner:       tmuxRunner,
@@ -92,8 +90,8 @@ func NewMatcherWithRunners(processRunner ProcessRunner, tmuxRunner CommandRunner
 
 // MemoryScannerInterface allows for mocking memory scanning in tests.
 type MemoryScannerInterface interface {
-	// MatchPIDToSession returns the session ID for a PID based on memory scanning.
-	MatchPIDToSession(pid int, sessionPatterns map[string][]byte) (string, int)
+	// ScanAllPIDsForSessions returns PID -> sessionID mapping.
+	ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string
 }
 
 // SetMemoryScanner sets a custom memory scanner (for testing).
@@ -120,11 +118,28 @@ func (m *Matcher) SetSessionFilePaths(paths []string) {
 // 1. Discovers all tmux panes
 // 2. Lists all running processes
 // 3. Identifies Claude processes
-// 4. Reads CWD for Claude processes
-// 5. Matches Claude processes to panes
+// 4. Memory scans Claude PIDs to find session IDs
 //
 // Returns an error if either tmux or process discovery fails.
+// Returns nil immediately if a refresh is already in progress.
 func (m *Matcher) Refresh() error {
+	// Check if refresh is already in progress
+	m.mu.Lock()
+	if m.refreshing {
+		m.mu.Unlock()
+		logging.Info("Matcher.Refresh: Skipping - refresh already in progress")
+		return nil
+	}
+	m.refreshing = true
+	m.mu.Unlock()
+
+	// Ensure we clear the flag when done
+	defer func() {
+		m.mu.Lock()
+		m.refreshing = false
+		m.mu.Unlock()
+	}()
+
 	logging.Info("Matcher.Refresh: Starting refresh...")
 
 	// Discover tmux panes
@@ -153,25 +168,25 @@ func (m *Matcher) Refresh() error {
 	allProcs := m.processList.All()
 	logging.Info("Matcher.Refresh: Discovered %d total processes", len(allProcs))
 
-	// Find Claude processes and match them to panes
+	// Find Claude processes and match them to sessions via memory scanning
 	logging.Debug("Matcher.Refresh: Finding and matching Claude processes...")
 	m.findAndMatchClaudeProcesses()
 
-	logging.Info("Matcher.Refresh: Complete. sessionToPaneID=%d, cwdToPanes=%d, pidToSessionID=%d",
-		len(m.sessionToPaneID), len(m.cwdToPanes), len(m.pidToSessionID))
+	logging.Info("Matcher.Refresh: Complete. pidToSessionID=%d, claudeProcesses=%d",
+		len(m.pidToSessionID), len(m.claudeProcesses))
 	return nil
 }
 
-// findAndMatchClaudeProcesses identifies Claude processes and matches them to panes.
+// findAndMatchClaudeProcesses identifies Claude processes and matches them to sessions.
 func (m *Matcher) findAndMatchClaudeProcesses() {
+	logging.Info("findAndMatchClaudeProcesses: ENTERING")
 	m.mu.Lock()
+	logging.Info("findAndMatchClaudeProcesses: GOT LOCK")
 	defer m.mu.Unlock()
 
 	// Clear previous state
 	m.claudeProcesses = make([]ClaudeProcess, 0)
-	m.sessionToPaneID = make(map[string]string)
 	m.pidToSessionID = make(map[int]string)
-	m.cwdToPanes = make(map[string][]string)
 
 	runner := m.processRunner
 	if runner == nil {
@@ -181,7 +196,7 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 	allProcs := m.processList.All()
 	logging.Debug("findAndMatchClaudeProcesses: Scanning %d processes for Claude commands", len(allProcs))
 
-	// First pass: identify Claude processes
+	// First pass: identify Claude processes and collect PIDs
 	var claudePIDs []int
 	for _, proc := range allProcs {
 		if !IsClaudeProcess(proc.Command) {
@@ -192,32 +207,21 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 			proc.PID, proc.Command, proc.TTY)
 
 		claudeProc := ClaudeProcess{
-			Process:   proc,
-			SessionID: ExtractSessionID(proc.Command),
+			Process: proc,
 		}
 
-		// Try to get CWD for this process
+		// Try to get CWD for this process (useful for debugging)
 		if cwd, err := runner.ReadCWD(proc.PID); err == nil {
 			claudeProc.CWD = cwd
 			logging.Debug("findAndMatchClaudeProcesses: PID=%d CWD=%s", proc.PID, cwd)
-		} else {
-			logging.Debug("findAndMatchClaudeProcesses: PID=%d CWD read failed: %v", proc.PID, err)
 		}
 
-		// Try to find the pane for this process
+		// Try to find the pane for this process via TTY
 		pane := m.paneMap.GetByTTY(proc.TTY)
 		if pane != nil {
 			claudeProc.PaneID = pane.ID
 			logging.Debug("findAndMatchClaudeProcesses: PID=%d matched to pane %s via TTY %s",
 				proc.PID, pane.ID, proc.TTY)
-
-			// Cache CWD mapping
-			if claudeProc.CWD != "" {
-				// Resolve symlinks for consistent matching
-				resolvedCWD := resolveSymlinks(claudeProc.CWD)
-				// Append to slice - multiple processes can share the same CWD
-				m.cwdToPanes[resolvedCWD] = append(m.cwdToPanes[resolvedCWD], pane.ID)
-			}
 		} else {
 			logging.Debug("findAndMatchClaudeProcesses: PID=%d no pane found for TTY %s", proc.PID, proc.TTY)
 		}
@@ -226,26 +230,25 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 		claudePIDs = append(claudePIDs, proc.PID)
 	}
 
-	logging.Info("findAndMatchClaudeProcesses: Found %d Claude processes", len(m.claudeProcesses))
+	logging.Info("findAndMatchClaudeProcesses: Found %d Claude processes, %d session paths available",
+		len(m.claudeProcesses), len(m.sessionFilePaths))
 
 	// Second pass: memory scanning to match PIDs to sessions
 	if len(m.sessionFilePaths) > 0 && len(claudePIDs) > 0 {
+		logging.Info("findAndMatchClaudeProcesses: Starting memory scan for %d PIDs", len(claudePIDs))
 		m.scanAndMatchSessions(claudePIDs)
+		logging.Info("findAndMatchClaudeProcesses: Memory scan complete, pidToSessionID=%d", len(m.pidToSessionID))
+	} else {
+		logging.Info("findAndMatchClaudeProcesses: SKIPPING memory scan (sessionPaths=%d, claudePIDs=%d)",
+			len(m.sessionFilePaths), len(claudePIDs))
 	}
 
-	// Third pass: build sessionToPaneID from memory scan results and command-line args
+	// Third pass: update ClaudeProcess structs with session IDs from memory scan
 	for i := range m.claudeProcesses {
 		proc := &m.claudeProcesses[i]
-
-		// First try memory scan result
 		if sessionID, ok := m.pidToSessionID[proc.PID]; ok {
 			proc.SessionID = sessionID
 			logging.Debug("PID %d: session ID from memory scan: %s", proc.PID, sessionID)
-		}
-
-		// Cache session -> pane mapping
-		if proc.SessionID != "" && proc.PaneID != "" {
-			m.sessionToPaneID[proc.SessionID] = proc.PaneID
 		}
 	}
 
@@ -257,10 +260,12 @@ func (m *Matcher) findAndMatchClaudeProcesses() {
 // This indicates a potential bug in the session-to-pane matching logic, typically caused
 // by stale session data after operations like /clear that create new sessions.
 func (m *Matcher) logDuplicateMappings() {
-	// Build reverse mapping: pane ID -> list of session IDs
+	// Build reverse mapping: pane ID -> list of session IDs from claudeProcesses
 	paneToSessions := make(map[string][]string)
-	for sessionID, paneID := range m.sessionToPaneID {
-		paneToSessions[paneID] = append(paneToSessions[paneID], sessionID)
+	for _, proc := range m.claudeProcesses {
+		if proc.SessionID != "" && proc.PaneID != "" {
+			paneToSessions[proc.PaneID] = append(paneToSessions[proc.PaneID], proc.SessionID)
+		}
 	}
 
 	// Log any panes with multiple sessions
@@ -277,35 +282,20 @@ func (m *Matcher) scanAndMatchSessions(pids []int) {
 	logging.Info("scanAndMatchSessions: Starting memory scan for %d PIDs with %d session paths",
 		len(pids), len(m.sessionFilePaths))
 
-	// Build patterns from session paths
-	sessionPatterns := BuildSessionPatterns(m.sessionFilePaths)
-	if len(sessionPatterns) == 0 {
-		logging.Warn("scanAndMatchSessions: No session patterns built from paths")
-		return
+	var pidToSession map[int]string
+
+	if m.memoryScanner != nil {
+		// Use mock scanner for testing
+		pidToSession = m.memoryScanner.ScanAllPIDsForSessions(pids, m.sessionFilePaths)
+	} else {
+		// Use real memory scanning with NULL-prefix approach
+		pidToSession = ScanAllPIDsForSessions(pids, m.sessionFilePaths)
 	}
-	logging.Debug("scanAndMatchSessions: Built %d session patterns", len(sessionPatterns))
 
-	// Scan each PID
-	for i, pid := range pids {
-		logging.Debug("scanAndMatchSessions: Scanning PID %d (%d/%d)...", pid, i+1, len(pids))
-
-		var sessionID string
-		var count int
-
-		if m.memoryScanner != nil {
-			// Use mock scanner for testing
-			sessionID, count = m.memoryScanner.MatchPIDToSession(pid, sessionPatterns)
-		} else {
-			// Use real memory scanning
-			sessionID, count = MatchPIDToSession(pid, sessionPatterns)
-		}
-
-		if sessionID != "" {
-			m.pidToSessionID[pid] = sessionID
-			logging.Info("scanAndMatchSessions: PID %d -> session %s (count: %d)", pid, sessionID, count)
-		} else {
-			logging.Debug("scanAndMatchSessions: PID %d -> no session match", pid)
-		}
+	// Store results
+	for pid, sessionID := range pidToSession {
+		m.pidToSessionID[pid] = sessionID
+		logging.Info("scanAndMatchSessions: PID %d -> session %s", pid, sessionID)
 	}
 
 	logging.Info("scanAndMatchSessions: Complete. Matched %d PIDs to sessions", len(m.pidToSessionID))
@@ -324,16 +314,11 @@ func (m *Matcher) FindClaudeProcesses() []ClaudeProcess {
 // MatchSessionToPane finds the tmux pane where a session is running.
 // Returns nil if no matching pane is found.
 //
-// Matching strategy (in order of precedence):
-// 1. Match by session ID (from memory scanning or --resume flag)
-// 2. Match by ProjectPath (more specific than CWD)
-// 3. Match by CWD (session's CWD matches process's CWD)
+// Matching strategy:
+// 1. Find PID that owns this session (from memory scanning)
+// 2. Find pane via PID's TTY
 //
-// Memory scanning is the primary strategy: we scan process memory for
-// session file paths to reliably identify which session each process is running.
-// This works even for fresh sessions without --resume flags.
-//
-// When multiple panes match the same CWD, we return the first match.
+// This is a direct lookup: sessionID -> PID -> TTY -> pane
 func (m *Matcher) MatchSessionToPane(sess *session.Session) *Pane {
 	if sess == nil {
 		logging.Debug("MatchSessionToPane: session is nil")
@@ -343,59 +328,31 @@ func (m *Matcher) MatchSessionToPane(sess *session.Session) *Pane {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	logging.Debug("MatchSessionToPane: Looking for session ID=%s, ProjectPath=%s, CWD=%s",
-		sess.ID, sess.ProjectPath, sess.CWD)
-	logging.Debug("MatchSessionToPane: sessionToPaneID has %d entries", len(m.sessionToPaneID))
-	for sid, pid := range m.sessionToPaneID {
-		logging.Debug("MatchSessionToPane:   sessionToPaneID[%s] = %s", sid, pid)
+	logging.Debug("MatchSessionToPane: Looking for session ID=%s", sess.ID)
+
+	// Find the PID that owns this session
+	for pid, sessionID := range m.pidToSessionID {
+		if sessionID == sess.ID {
+			// Found the PID, now find the pane
+			for _, proc := range m.claudeProcesses {
+				if proc.PID == pid && proc.PaneID != "" {
+					logging.Info("MatchSessionToPane: Matched session %s to pane %s via PID %d",
+						sess.ID, proc.PaneID, pid)
+					return m.paneMap.GetByID(proc.PaneID)
+				}
+			}
+			// PID found but no pane (process not in tmux)
+			logging.Debug("MatchSessionToPane: Session %s owned by PID %d but no pane found", sess.ID, pid)
+			return nil
+		}
 	}
 
-	// Strategy 1: Match by session ID (most reliable)
-	if paneID, ok := m.sessionToPaneID[sess.ID]; ok {
-		logging.Info("MatchSessionToPane: Matched session %s to pane %s by session ID", sess.ID, paneID)
-		pane := m.paneMap.GetByID(paneID)
-		if pane == nil {
-			logging.Warn("MatchSessionToPane: paneMap.GetByID(%s) returned nil!", paneID)
-		}
-		return pane
-	}
-	logging.Debug("MatchSessionToPane: No session ID match for %s", sess.ID)
-
-	// Strategy 2: Match by ProjectPath (more specific than CWD)
-	if sess.ProjectPath != "" {
-		resolvedProjectPath := resolveSymlinks(sess.ProjectPath)
-		logging.Debug("MatchSessionToPane: Trying ProjectPath match, resolved=%s", resolvedProjectPath)
-		if paneIDs, ok := m.cwdToPanes[resolvedProjectPath]; ok && len(paneIDs) > 0 {
-			logging.Info("MatchSessionToPane: Matched session %s to pane %s by ProjectPath (of %d candidates)",
-				sess.ID, paneIDs[0], len(paneIDs))
-			return m.paneMap.GetByID(paneIDs[0])
-		}
-		logging.Debug("MatchSessionToPane: No ProjectPath match")
-	}
-
-	// Strategy 3: Match by CWD
-	if sess.CWD != "" {
-		resolvedCWD := resolveSymlinks(sess.CWD)
-		logging.Debug("MatchSessionToPane: Trying CWD match, resolved=%s", resolvedCWD)
-		logging.Debug("MatchSessionToPane: cwdToPanes has %d entries", len(m.cwdToPanes))
-		for cwd, panes := range m.cwdToPanes {
-			logging.Debug("MatchSessionToPane:   cwdToPanes[%s] = %v", cwd, panes)
-		}
-		if paneIDs, ok := m.cwdToPanes[resolvedCWD]; ok && len(paneIDs) > 0 {
-			logging.Info("MatchSessionToPane: Matched session %s to pane %s by CWD (of %d candidates)",
-				sess.ID, paneIDs[0], len(paneIDs))
-			return m.paneMap.GetByID(paneIDs[0])
-		}
-		logging.Debug("MatchSessionToPane: No CWD match")
-	}
-
-	logging.Info("MatchSessionToPane: No pane match found for session %s (ID=%s, ProjectPath=%s, CWD=%s)",
-		sess.ID, sess.ID, sess.ProjectPath, sess.CWD)
+	logging.Debug("MatchSessionToPane: No PID found owning session %s", sess.ID)
 	return nil
 }
 
 // HasRunningProcess returns true if there is a Claude process running
-// that matches the given session (by session ID, ProjectPath, or CWD).
+// that owns the given session (determined by memory scanning).
 func (m *Matcher) HasRunningProcess(sess *session.Session) bool {
 	if sess == nil {
 		return false
@@ -404,27 +361,17 @@ func (m *Matcher) HasRunningProcess(sess *session.Session) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Check by session ID
-	if _, ok := m.sessionToPaneID[sess.ID]; ok {
-		return true
-	}
+	logging.Info("HasRunningProcess: checking sess.ID=%s, pidToSessionID has %d entries", sess.ID, len(m.pidToSessionID))
 
-	// Check by ProjectPath
-	if sess.ProjectPath != "" {
-		resolvedProjectPath := resolveSymlinks(sess.ProjectPath)
-		if paneIDs, ok := m.cwdToPanes[resolvedProjectPath]; ok && len(paneIDs) > 0 {
+	// Check if any PID owns this session
+	for pid, sessionID := range m.pidToSessionID {
+		if sessionID == sess.ID {
+			logging.Info("HasRunningProcess: FOUND - PID %d owns session %s", pid, sess.ID)
 			return true
 		}
 	}
 
-	// Check by CWD
-	if sess.CWD != "" {
-		resolvedCWD := resolveSymlinks(sess.CWD)
-		if paneIDs, ok := m.cwdToPanes[resolvedCWD]; ok && len(paneIDs) > 0 {
-			return true
-		}
-	}
-
+	logging.Debug("HasRunningProcess: NOT FOUND - session %s not in pidToSessionID", sess.ID)
 	return false
 }
 
@@ -436,21 +383,6 @@ func (m *Matcher) GetPaneByID(id string) *Pane {
 // AllPanes returns all tmux panes.
 func (m *Matcher) AllPanes() []*Pane {
 	return m.paneMap.All()
-}
-
-// GetCWDToPanes returns a copy of the CWD to panes mapping.
-// This is primarily for debugging.
-func (m *Matcher) GetCWDToPanes() map[string][]string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make(map[string][]string)
-	for k, v := range m.cwdToPanes {
-		copied := make([]string, len(v))
-		copy(copied, v)
-		result[k] = copied
-	}
-	return result
 }
 
 // GetPIDToSessionID returns a copy of the PID to session ID mapping.
@@ -473,6 +405,7 @@ func IsClaudeProcess(command string) bool {
 
 // ExtractSessionID extracts the session ID from a command line if present.
 // Returns empty string if no --resume or -r flag is found.
+// Note: This is less reliable than memory scanning but kept for debugging.
 func ExtractSessionID(command string) string {
 	matches := ResumeSessionIDRegex.FindStringSubmatch(command)
 	if len(matches) >= 2 {
@@ -546,28 +479,10 @@ func (m *Matcher) FindProcessesByCWD(cwd string) []ClaudeProcess {
 	return result
 }
 
-// matchByMostRecent selects the most recently started Claude process
-// when multiple processes are running in the same directory.
-// This is a heuristic - the process with the highest PID is likely
-// the most recently started.
-func matchByMostRecent(processes []ClaudeProcess) *ClaudeProcess {
-	if len(processes) == 0 {
-		return nil
-	}
-
-	highest := &processes[0]
-	for i := range processes {
-		if processes[i].PID > highest.PID {
-			highest = &processes[i]
-		}
-	}
-	return highest
-}
-
 // String returns a description of the ClaudeProcess for debugging.
 func (cp *ClaudeProcess) String() string {
 	var parts []string
-	parts = append(parts, "PID="+strings.TrimSpace(string(rune(cp.PID))))
+	parts = append(parts, "PID="+strconv.Itoa(cp.PID))
 
 	if cp.SessionID != "" {
 		parts = append(parts, "session="+cp.SessionID)

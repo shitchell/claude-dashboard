@@ -106,167 +106,6 @@ func TestParseMapLine(t *testing.T) {
 	}
 }
 
-// TestBuildSessionPatterns tests pattern generation from session paths.
-func TestBuildSessionPatterns(t *testing.T) {
-	tests := []struct {
-		name           string
-		sessionPaths   []string
-		wantPatterns   map[string]string // sessionID -> expected pattern string
-		wantEmptyIDs   []string          // session IDs we don't expect
-	}{
-		{
-			name: "single session",
-			sessionPaths: []string{
-				"/home/user/.claude/projects/-home-user-myproject/abc123.jsonl",
-			},
-			wantPatterns: map[string]string{
-				"abc123": "-home-user-myproject/abc123",
-			},
-		},
-		{
-			name: "multiple sessions same project",
-			sessionPaths: []string{
-				"/home/user/.claude/projects/-home-user/sess1.jsonl",
-				"/home/user/.claude/projects/-home-user/sess2.jsonl",
-			},
-			wantPatterns: map[string]string{
-				"sess1": "-home-user/sess1",
-				"sess2": "-home-user/sess2",
-			},
-		},
-		{
-			name: "different projects",
-			sessionPaths: []string{
-				"/home/user/.claude/projects/-home-user-proj1/abc.jsonl",
-				"/home/user/.claude/projects/-home-user-proj2/def.jsonl",
-			},
-			wantPatterns: map[string]string{
-				"abc": "-home-user-proj1/abc",
-				"def": "-home-user-proj2/def",
-			},
-		},
-		{
-			name: "uuid-style session IDs",
-			sessionPaths: []string{
-				"/home/guy/.claude/projects/-home-guy/b6ce5659-450d-4026-a3d8-94f8c45ddc37.jsonl",
-			},
-			wantPatterns: map[string]string{
-				"b6ce5659-450d-4026-a3d8-94f8c45ddc37": "-home-guy/b6ce5659-450d-4026-a3d8-94f8c45ddc37",
-			},
-		},
-		{
-			name:         "empty input",
-			sessionPaths: []string{},
-			wantPatterns: map[string]string{},
-		},
-		{
-			name: "invalid path (too short)",
-			sessionPaths: []string{
-				"abc.jsonl",
-			},
-			// Should still produce something, even if not ideal
-			wantPatterns: map[string]string{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			patterns := BuildSessionPatterns(tt.sessionPaths)
-
-			// Check expected patterns
-			for sessionID, wantPattern := range tt.wantPatterns {
-				gotPattern, ok := patterns[sessionID]
-				if !ok {
-					t.Errorf("Missing pattern for session %q", sessionID)
-					continue
-				}
-				if string(gotPattern) != wantPattern {
-					t.Errorf("Pattern for %q = %q, want %q", sessionID, string(gotPattern), wantPattern)
-				}
-			}
-
-			// Check we don't have unexpected patterns
-			for sessionID := range patterns {
-				if _, ok := tt.wantPatterns[sessionID]; !ok {
-					// Only fail if it's in wantEmptyIDs
-					for _, emptyID := range tt.wantEmptyIDs {
-						if sessionID == emptyID {
-							t.Errorf("Unexpected pattern for session %q", sessionID)
-						}
-					}
-				}
-			}
-		})
-	}
-}
-
-// TestFindBestMatch tests finding the pattern with highest count.
-func TestFindBestMatch(t *testing.T) {
-	tests := []struct {
-		name        string
-		counts      map[string]int
-		wantPattern string
-		wantCount   int
-	}{
-		{
-			name:        "empty map",
-			counts:      map[string]int{},
-			wantPattern: "",
-			wantCount:   0,
-		},
-		{
-			name: "single entry",
-			counts: map[string]int{
-				"pattern1": 5,
-			},
-			wantPattern: "pattern1",
-			wantCount:   5,
-		},
-		{
-			name: "multiple entries - clear winner",
-			counts: map[string]int{
-				"pattern1": 5,
-				"pattern2": 10,
-				"pattern3": 3,
-			},
-			wantPattern: "pattern2",
-			wantCount:   10,
-		},
-		{
-			name: "all zeros",
-			counts: map[string]int{
-				"pattern1": 0,
-				"pattern2": 0,
-			},
-			wantPattern: "",
-			wantCount:   0,
-		},
-		{
-			name: "some zeros",
-			counts: map[string]int{
-				"pattern1": 0,
-				"pattern2": 7,
-				"pattern3": 0,
-			},
-			wantPattern: "pattern2",
-			wantCount:   7,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotPattern, gotCount := FindBestMatch(tt.counts)
-
-			if gotPattern != tt.wantPattern {
-				t.Errorf("FindBestMatch() pattern = %q, want %q", gotPattern, tt.wantPattern)
-			}
-			if gotCount != tt.wantCount {
-				t.Errorf("FindBestMatch() count = %d, want %d", gotCount, tt.wantCount)
-			}
-		})
-	}
-}
-
 // TestMemoryScannerScanForPatternsEmpty tests scanning with no patterns.
 func TestMemoryScannerScanForPatternsEmpty(t *testing.T) {
 	scanner := NewMemoryScanner(1) // PID 1 (init) should be readable
@@ -280,16 +119,20 @@ func TestMemoryScannerScanForPatternsEmpty(t *testing.T) {
 	}
 }
 
-// mockMemoryScanner implements MemoryScannerInterface for testing.
-type mockMemoryScanner struct {
+// legacyMockMemoryScanner is a test helper for the old interface.
+// Note: The production code now uses the new ScanAllPIDsForSessions interface.
+type legacyMockMemoryScanner struct {
 	pidToSession map[int]string
-	pidToCounts  map[int]int
 }
 
-func (m *mockMemoryScanner) MatchPIDToSession(pid int, sessionPatterns map[string][]byte) (string, int) {
-	sessionID := m.pidToSession[pid]
-	count := m.pidToCounts[pid]
-	return sessionID, count
+func (m *legacyMockMemoryScanner) ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
+	result := make(map[int]string)
+	for _, pid := range pids {
+		if sessionID, ok := m.pidToSession[pid]; ok {
+			result[pid] = sessionID
+		}
+	}
+	return result
 }
 
 // TestMatcherWithMockMemoryScanner tests the matcher integration with mock memory scanning.
@@ -313,14 +156,10 @@ func TestMatcherWithMockMemoryScanner(t *testing.T) {
 		},
 	}
 
-	mockScanner := &mockMemoryScanner{
+	mockScanner := &legacyMockMemoryScanner{
 		pidToSession: map[int]string{
 			12346: "session-abc",
 			12347: "session-def",
-		},
-		pidToCounts: map[int]int{
-			12346: 50,
-			12347: 30,
 		},
 	}
 
@@ -383,12 +222,9 @@ func TestMatcherMatchSessionToPaneWithMemoryScan(t *testing.T) {
 		},
 	}
 
-	mockScanner := &mockMemoryScanner{
+	mockScanner := &legacyMockMemoryScanner{
 		pidToSession: map[int]string{
 			12346: "session-xyz",
-		},
-		pidToCounts: map[int]int{
-			12346: 100,
 		},
 	}
 
