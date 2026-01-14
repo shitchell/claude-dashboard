@@ -644,6 +644,12 @@ namespace tmux {
         + Run(args ...string) ([]byte, error)
 
     }
+    class "scanResult" << (S,Aquamarine) >> {
+        - pid int
+        - sessionID string
+        - found bool
+
+    }
 }
 namespace ui {
     interface "Column"  {

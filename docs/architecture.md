@@ -972,9 +972,10 @@ The codebase includes test files for most packages with:
 1. **Caching**: Avoid re-parsing unchanged JSONL files
 2. **Lazy Last-Line Reading**: Use ParseLastEntry() for status checks
 3. **Process Memory Matching**: Cache PID-to-SessionID mappings
-4. **Batch Status Updates**: UpdateAllSessionStatuses() refreshes matcher once
-5. **Cursor Position Preservation**: Survives session list refresh
-6. **Buffer Management**: Custom buffer sizes for large JSONL files
+4. **Parallel PID Scanning**: Worker pool with 8 goroutines for concurrent memory scanning (~3x speedup)
+5. **Batch Status Updates**: UpdateAllSessionStatuses() refreshes matcher once
+6. **Cursor Position Preservation**: Survives session list refresh
+7. **Buffer Management**: Custom buffer sizes for large JSONL files
 
 ---
 

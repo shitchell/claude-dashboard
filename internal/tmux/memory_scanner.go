@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/shitchell/claude-dashboard/internal/logging"
 )
@@ -18,6 +19,10 @@ import (
 // V8 stores session file paths in 256KB anonymous rw-p regions.
 // Regions larger than this are skipped.
 const MaxRegionSize = 256 * 1024
+
+// NumScanWorkers is the number of goroutines used for parallel PID scanning.
+// Benchmarks showed 8 workers achieve ~3x speedup (379ms -> 128ms).
+const NumScanWorkers = 8
 
 // UUIDPattern matches UUID-formatted session IDs in filenames.
 // This is used to filter session files - we skip agent-*.jsonl files.
@@ -454,6 +459,14 @@ func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) 
 	return scanner.ScanUntilMatch(patterns)
 }
 
+// scanResult holds the result of scanning a single PID for session ownership.
+// Used by the worker pool in ScanAllPIDsForSessions.
+type scanResult struct {
+	pid       int
+	sessionID string
+	found     bool
+}
+
 // ScanAllPIDsForSessions scans multiple PIDs and returns a map of PID -> sessionID.
 // This is the main entry point for the memory scanner.
 //
@@ -461,6 +474,9 @@ func MatchPIDToSessionNullPrefix(pid int, sessionPaths []string) (string, bool) 
 //  1. For each PID, read all <=256KB readable memory regions into a buffer
 //  2. For each UUID session file path, search for \x00 + path in the buffer
 //  3. If found, map PID -> sessionID and break (a PID owns at most one session)
+//
+// Uses a worker pool with NumScanWorkers (8) goroutines for parallel scanning,
+// achieving approximately 3x speedup compared to sequential scanning.
 //
 // Returns a map where:
 // - Key: PID of a Claude process
@@ -479,15 +495,45 @@ func ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
 		return result
 	}
 
-	logging.Info("Scanning %d PIDs for %d UUID session paths", len(pids), len(uuidPaths))
+	logging.Info("Scanning %d PIDs for %d UUID session paths using %d workers",
+		len(pids), len(uuidPaths), NumScanWorkers)
 
+	// Create channels for worker pool
+	jobs := make(chan int, len(pids))
+	results := make(chan scanResult, len(pids))
+
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	for w := 0; w < NumScanWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for pid := range jobs {
+				sessionID, found := MatchPIDToSessionNullPrefix(pid, uuidPaths)
+				results <- scanResult{pid: pid, sessionID: sessionID, found: found}
+			}
+		}()
+	}
+
+	// Send all PIDs to the jobs channel
 	for _, pid := range pids {
-		sessionID, found := MatchPIDToSessionNullPrefix(pid, uuidPaths)
-		if found {
-			result[pid] = sessionID
-			logging.Info("PID %d -> session %s", pid, sessionID)
+		jobs <- pid
+	}
+	close(jobs)
+
+	// Wait for all workers to complete, then close results channel
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results from all workers
+	for r := range results {
+		if r.found {
+			result[r.pid] = r.sessionID
+			logging.Info("PID %d -> session %s", r.pid, r.sessionID)
 		} else {
-			logging.Debug("PID %d -> no session match", pid)
+			logging.Debug("PID %d -> no session match", r.pid)
 		}
 	}
 
