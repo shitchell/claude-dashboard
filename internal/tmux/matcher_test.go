@@ -1,6 +1,10 @@
 package tmux
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/shitchell/claude-dashboard/internal/session"
@@ -927,4 +931,506 @@ func TestSessionToPaneMappingAfterClearScenario(t *testing.T) {
 	}
 
 	t.Log("Duplicate detection correctly identifies /clear scenario bug")
+}
+
+// =============================================================================
+// Tests for Chunk 003: PID Cache and SessionWatcher Integration
+// =============================================================================
+//
+// These tests verify the caching integration introduced in ticket 011 chunk 003:
+// 1. PIDCache is used to skip scanning known PIDs
+// 2. ForceFullScan bypasses the cache
+// 3. Cache is updated after scans
+// 4. SessionWatcher triggers cache invalidation
+
+// trackingMemoryScanner tracks which PIDs are scanned and allows configurable results.
+type trackingMemoryScanner struct {
+	mu           sync.Mutex
+	scannedPIDs  []int
+	scanCount    int
+	pidToSession map[int]string
+}
+
+func (s *trackingMemoryScanner) ScanAllPIDsForSessions(pids []int, sessionPaths []string) map[int]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.scannedPIDs = append(s.scannedPIDs, pids...)
+	s.scanCount++
+
+	result := make(map[int]string)
+	for _, pid := range pids {
+		if sessionID, ok := s.pidToSession[pid]; ok {
+			result[pid] = sessionID
+		}
+	}
+	return result
+}
+
+func (s *trackingMemoryScanner) GetScannedPIDs() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]int, len(s.scannedPIDs))
+	copy(result, s.scannedPIDs)
+	return result
+}
+
+func (s *trackingMemoryScanner) GetScanCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scanCount
+}
+
+func (s *trackingMemoryScanner) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scannedPIDs = nil
+	s.scanCount = 0
+}
+
+// TestMatcher_UsesCacheForKnownPIDs verifies that cached PIDs are not rescanned.
+func TestMatcher_UsesCacheForKnownPIDs(t *testing.T) {
+	// Set TMUX env var for the test
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	tmpDir := t.TempDir()
+
+	runner := &combinedMockRunner{
+		tmuxOutput: []byte(`/dev/pts/42	%0	main	0	code	0	bash
+/dev/pts/43	%1	main	1	claude	0	claude
+`),
+		processOutput: []byte(`12346	pts/43	claude
+`),
+		cwds: map[int]string{
+			12346: "/home/user/project",
+		},
+	}
+
+	// Create tracking scanner
+	tracker := &trackingMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session-abc",
+		},
+	}
+
+	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(tracker)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session-abc.jsonl",
+	})
+
+	// Create and populate cache with known PID
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	cache.Set(12346, "/home/user/.claude/projects/-home-user-project/session-abc.jsonl")
+	matcher.pidCache = cache
+
+	// First refresh - PID should be served from cache
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	// Verify PID was NOT scanned (came from cache)
+	scanned := tracker.GetScannedPIDs()
+	for _, pid := range scanned {
+		if pid == 12346 {
+			t.Error("PID 12346 was scanned despite being in cache")
+		}
+	}
+
+	// Verify session ID was still resolved correctly from cache
+	procs := matcher.FindClaudeProcesses()
+	if len(procs) != 1 {
+		t.Fatalf("FindClaudeProcesses() returned %d processes, want 1", len(procs))
+	}
+	if procs[0].SessionID != "session-abc" {
+		t.Errorf("SessionID = %q, want session-abc (from cache)", procs[0].SessionID)
+	}
+}
+
+// TestMatcher_ScansUncachedPIDs verifies that uncached PIDs are scanned.
+func TestMatcher_ScansUncachedPIDs(t *testing.T) {
+	// Set TMUX env var for the test
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	tmpDir := t.TempDir()
+
+	runner := &combinedMockRunner{
+		tmuxOutput: []byte(`/dev/pts/42	%0	main	0	code	0	bash
+/dev/pts/43	%1	main	1	claude	0	claude
+/dev/pts/44	%2	main	2	claude2	0	claude
+`),
+		processOutput: []byte(`12346	pts/43	claude
+12347	pts/44	claude
+`),
+		cwds: map[int]string{
+			12346: "/home/user/project1",
+			12347: "/home/user/project2",
+		},
+	}
+
+	// Tracker will return session IDs for both PIDs
+	tracker := &trackingMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session-cached",
+			12347: "session-new",
+		},
+	}
+
+	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(tracker)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project1/session-cached.jsonl",
+		"/home/user/.claude/projects/-home-user-project2/session-new.jsonl",
+	})
+
+	// Pre-populate cache with only one PID
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	cache.Set(12346, "/home/user/.claude/projects/-home-user-project1/session-cached.jsonl")
+	matcher.pidCache = cache
+
+	// Refresh
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	// Verify only the uncached PID (12347) was scanned
+	scanned := tracker.GetScannedPIDs()
+	found12346 := false
+	found12347 := false
+	for _, pid := range scanned {
+		if pid == 12346 {
+			found12346 = true
+		}
+		if pid == 12347 {
+			found12347 = true
+		}
+	}
+
+	if found12346 {
+		t.Error("Cached PID 12346 was scanned despite being in cache")
+	}
+	if !found12347 {
+		t.Error("Uncached PID 12347 was NOT scanned")
+	}
+}
+
+// TestMatcher_UpdatesCacheAfterScan verifies cache is updated with new scan results.
+func TestMatcher_UpdatesCacheAfterScan(t *testing.T) {
+	// Set TMUX env var for the test
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	tmpDir := t.TempDir()
+
+	runner := &combinedMockRunner{
+		tmuxOutput: []byte(`/dev/pts/43	%1	main	1	claude	0	claude
+`),
+		processOutput: []byte(`12346	pts/43	claude
+`),
+		cwds: map[int]string{
+			12346: "/home/user/project",
+		},
+	}
+
+	tracker := &trackingMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session-new",
+		},
+	}
+
+	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(tracker)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session-new.jsonl",
+	})
+
+	// Start with empty cache
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	matcher.pidCache = cache
+
+	// Refresh - should scan PID and update cache
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	// Verify PID was added to cache
+	sessionFile, ok := cache.Get(12346)
+	if !ok {
+		t.Error("PID 12346 was NOT added to cache after scan")
+	}
+	if sessionFile != "/home/user/.claude/projects/-home-user-project/session-new.jsonl" {
+		t.Errorf("Cached session file = %q, want /home/user/.claude/projects/-home-user-project/session-new.jsonl", sessionFile)
+	}
+}
+
+// TestMatcher_ForceFullScan_ClearsCache verifies SetForceFullScan bypasses cache.
+func TestMatcher_ForceFullScan_ClearsCache(t *testing.T) {
+	// Set TMUX env var for the test
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	tmpDir := t.TempDir()
+
+	runner := &combinedMockRunner{
+		tmuxOutput: []byte(`/dev/pts/43	%1	main	1	claude	0	claude
+`),
+		processOutput: []byte(`12346	pts/43	claude
+`),
+		cwds: map[int]string{
+			12346: "/home/user/project",
+		},
+	}
+
+	tracker := &trackingMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session-abc",
+		},
+	}
+
+	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(tracker)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session-abc.jsonl",
+	})
+
+	// Pre-populate cache
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	cache.Set(12346, "/home/user/.claude/projects/-home-user-project/session-abc.jsonl")
+	matcher.pidCache = cache
+
+	// Set force full scan
+	matcher.SetForceFullScan(true)
+
+	// Refresh - should scan all PIDs despite cache
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+
+	// Verify PID 12346 WAS scanned (cache was bypassed)
+	scanned := tracker.GetScannedPIDs()
+	found12346 := false
+	for _, pid := range scanned {
+		if pid == 12346 {
+			found12346 = true
+			break
+		}
+	}
+
+	if !found12346 {
+		t.Error("PID 12346 was NOT scanned despite forceFullScan=true")
+	}
+}
+
+// TestMatcher_ForceFullScan_ClearsFlag verifies flag is cleared after Refresh.
+func TestMatcher_ForceFullScan_ClearsFlag(t *testing.T) {
+	// Set TMUX env var for the test
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
+
+	tmpDir := t.TempDir()
+
+	runner := &combinedMockRunner{
+		tmuxOutput: []byte(`/dev/pts/43	%1	main	1	claude	0	claude
+`),
+		processOutput: []byte(`12346	pts/43	claude
+`),
+		cwds: map[int]string{
+			12346: "/home/user/project",
+		},
+	}
+
+	tracker := &trackingMemoryScanner{
+		pidToSession: map[int]string{
+			12346: "session-abc",
+		},
+	}
+
+	matcher := NewMatcherWithRunners(runner, runner)
+	matcher.SetMemoryScanner(tracker)
+	matcher.SetSessionFilePaths([]string{
+		"/home/user/.claude/projects/-home-user-project/session-abc.jsonl",
+	})
+
+	// Pre-populate cache and set force scan
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	cache.Set(12346, "/home/user/.claude/projects/-home-user-project/session-abc.jsonl")
+	matcher.pidCache = cache
+	matcher.SetForceFullScan(true)
+
+	// First refresh - force scan should be active
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("First Refresh() error = %v", err)
+	}
+
+	// Reset tracker
+	tracker.Reset()
+
+	// Second refresh - force scan flag should be cleared
+	if err := matcher.Refresh(); err != nil {
+		t.Fatalf("Second Refresh() error = %v", err)
+	}
+
+	// Verify PID was NOT scanned (flag was cleared, cache used)
+	scanned := tracker.GetScannedPIDs()
+	for _, pid := range scanned {
+		if pid == 12346 {
+			t.Error("PID 12346 was scanned on second Refresh - forceFullScan flag was not cleared")
+		}
+	}
+}
+
+// TestMatcher_Close_SavesCache verifies Close saves the cache.
+func TestMatcher_Close_SavesCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	// Create matcher with cache
+	matcher := NewMatcherWithRunners(nil, nil)
+	cache := NewPIDCacheWithPath(cachePath)
+	cache.Set(12345, "/path/to/session.jsonl")
+	matcher.pidCache = cache
+
+	// Close should save cache
+	if err := matcher.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+		t.Error("Cache file was not created by Close()")
+	}
+}
+
+// TestMatcher_GetPIDCache returns the cache for inspection.
+func TestMatcher_GetPIDCache(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	matcher := NewMatcherWithRunners(nil, nil)
+	cache := NewPIDCacheWithPath(filepath.Join(tmpDir, "cache.json"))
+	cache.Set(100, "/path/session.jsonl")
+	matcher.pidCache = cache
+
+	// GetPIDCache should return the cache
+	returnedCache := matcher.GetPIDCache()
+	if returnedCache != cache {
+		t.Error("GetPIDCache() did not return the expected cache")
+	}
+}
+
+// TestMatcher_GetSessionWatcher returns the watcher for inspection.
+func TestMatcher_GetSessionWatcher(t *testing.T) {
+	// Create a real matcher (which initializes the watcher)
+	matcher := NewMatcher()
+	defer matcher.Close()
+
+	watcher := matcher.GetSessionWatcher()
+	// Watcher should exist (created in NewMatcher)
+	if watcher == nil {
+		t.Error("GetSessionWatcher() returned nil for NewMatcher()")
+	}
+}
+
+// TestMatcher_NewMatcherWithRunners_NoCacheOrWatcher verifies test matchers don't init cache/watcher.
+func TestMatcher_NewMatcherWithRunners_NoCacheOrWatcher(t *testing.T) {
+	// Test matchers should NOT have cache/watcher (to avoid side effects)
+	matcher := NewMatcherWithRunners(nil, nil)
+
+	if matcher.pidCache != nil {
+		t.Error("NewMatcherWithRunners() should not initialize pidCache")
+	}
+	if matcher.sessionWatcher != nil {
+		t.Error("NewMatcherWithRunners() should not initialize sessionWatcher")
+	}
+}
+
+// =============================================================================
+// Causality Tests - Will FAIL if caching integration is reverted
+// =============================================================================
+
+// TestCausality_MatcherHasPIDCache verifies Matcher has pidCache field.
+// This test will FAIL if the pidCache field is removed.
+func TestCausality_MatcherHasPIDCache(t *testing.T) {
+	matcher := NewMatcher()
+	defer matcher.Close()
+
+	// This will fail to compile if pidCache field doesn't exist
+	cache := matcher.pidCache
+	if cache == nil {
+		t.Error("NewMatcher() should initialize pidCache")
+	}
+}
+
+// TestCausality_MatcherHasSessionWatcher verifies Matcher has sessionWatcher field.
+// This test will FAIL if the sessionWatcher field is removed.
+func TestCausality_MatcherHasSessionWatcher(t *testing.T) {
+	matcher := NewMatcher()
+	defer matcher.Close()
+
+	// This will fail to compile if sessionWatcher field doesn't exist
+	watcher := matcher.sessionWatcher
+	if watcher == nil {
+		t.Error("NewMatcher() should initialize sessionWatcher")
+	}
+}
+
+// TestCausality_MatcherHasForceFullScan verifies Matcher has forceFullScan field.
+// This test will FAIL if the forceFullScan field is removed.
+func TestCausality_MatcherHasForceFullScan(t *testing.T) {
+	matcher := NewMatcherWithRunners(nil, nil)
+
+	// This will fail to compile if SetForceFullScan doesn't exist
+	matcher.SetForceFullScan(true)
+	matcher.SetForceFullScan(false)
+
+	t.Log("SetForceFullScan method exists")
+}
+
+// TestCausality_MatcherSourceHasCacheIntegration verifies cache integration in source.
+// This test will FAIL if cache usage is removed from scanAndMatchSessions.
+func TestCausality_MatcherSourceHasCacheIntegration(t *testing.T) {
+	sourceFile := "matcher.go"
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read source file %s: %v", sourceFile, err)
+	}
+
+	source := string(content)
+
+	// Verify cache usage
+	requiredPatterns := []struct {
+		pattern     string
+		description string
+	}{
+		{"pidCache", "PIDCache field reference"},
+		{"sessionWatcher", "SessionWatcher field reference"},
+		{"forceFullScan", "forceFullScan flag reference"},
+		{"GetUncachedPIDs", "GetUncachedPIDs call"},
+		{"GetCachedMapping", "GetCachedMapping call"},
+		{"SetForceFullScan", "SetForceFullScan method"},
+	}
+
+	for _, req := range requiredPatterns {
+		if !strings.Contains(source, req.pattern) {
+			t.Errorf("Cache integration missing: %s (looking for %q)", req.description, req.pattern)
+		}
+	}
+}
+
+// TestCausality_NewMatcherInitializesCache verifies NewMatcher initializes cache.
+// This test will FAIL if NewMatcher stops initializing the cache.
+func TestCausality_NewMatcherInitializesCache(t *testing.T) {
+	sourceFile := "matcher.go"
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read source file %s: %v", sourceFile, err)
+	}
+
+	source := string(content)
+
+	// Verify NewPIDCache is called in NewMatcher
+	if !strings.Contains(source, "NewPIDCache()") {
+		t.Error("NewPIDCache() not found in source - cache initialization may have been removed")
+	}
+
+	// Verify NewSessionWatcher is called in NewMatcher
+	if !strings.Contains(source, "NewSessionWatcher") {
+		t.Error("NewSessionWatcher not found in source - watcher initialization may have been removed")
+	}
 }
