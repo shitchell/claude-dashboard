@@ -14,78 +14,78 @@ digraph gocallvis {
     edge [minlen="2"]
 
     subgraph "cluster_focus" {
-        bgcolor="#e6ecfa";
-label="main";
+        label="main";
 labelloc="t";
 labeljust="c";
 fontsize="18";
+bgcolor="#e6ecfa";
         
-        "github.com/shitchell/claude-dashboard.run" [ fillcolor="lightblue" label="run" penwidth="0.5" tooltip="github.com/shitchell/claude-dashboard.run | defined in main.go:39\nat main.go:83: calling [github.com/shitchell/claude-dashboard/internal/session.NewService]\nat main.go:42: calling [fmt.Fprintf]\nat main.go:74: calling [fmt.Fprintf]\nat main.go:85: calling [fmt.Fprintf]\nat main.go:102: calling [fmt.Fprintf]\nat main.go:67: calling [github.com/shitchell/claude-dashboard.printUsage]\nat main.go:97: calling [github.com/shitchell/claude-dashboard/internal/ui.NewModel]\nat main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]\nat main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]\nat main.go:41: calling [github.com/shitchell/claude-dashboard/internal/logging.Init]\nat main.go:45: calling [github.com/shitchell/claude-dashboard/internal/logging.Close]\nat main.go:50: calling [github.com/shitchell/claude-dashboard/internal/config.ParseFlags]\nat main.go:59: calling [fmt.Printf]\nat main.go:72: calling [github.com/shitchell/claude-dashboard/internal/config.Load]\nat main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]\nat main.go:47: calling [github.com/shitchell/claude-dashboard/internal/logging.Info]" ]
-        "github.com/shitchell/claude-dashboard.printUsage" [ penwidth="0.5" tooltip="github.com/shitchell/claude-dashboard.printUsage | defined in main.go:110\nat main.go:111: calling [fmt.Printf]" fillcolor="lightblue" label="printUsage" ]
-        "github.com/shitchell/claude-dashboard.main" [ tooltip="github.com/shitchell/claude-dashboard.main | defined in main.go:29\nat main.go:30: calling [github.com/shitchell/claude-dashboard.run]\nat main.go:32: calling [os.Exit]" fillcolor="lightblue" label="main" penwidth="0.5" ]
+        "github.com/shitchell/claude-dashboard.run" [ fillcolor="lightblue" label="run" penwidth="0.5" tooltip="github.com/shitchell/claude-dashboard.run | defined in main.go:39\nat main.go:47: calling [github.com/shitchell/claude-dashboard/internal/logging.Info]\nat main.go:59: calling [fmt.Printf]\nat main.go:41: calling [github.com/shitchell/claude-dashboard/internal/logging.Init]\nat main.go:42: calling [fmt.Fprintf]\nat main.go:74: calling [fmt.Fprintf]\nat main.go:85: calling [fmt.Fprintf]\nat main.go:102: calling [fmt.Fprintf]\nat main.go:50: calling [github.com/shitchell/claude-dashboard/internal/config.ParseFlags]\nat main.go:83: calling [github.com/shitchell/claude-dashboard/internal/session.NewService]\nat main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]\nat main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]\nat main.go:45: calling [github.com/shitchell/claude-dashboard/internal/logging.Close]\nat main.go:67: calling [github.com/shitchell/claude-dashboard.printUsage]\nat main.go:72: calling [github.com/shitchell/claude-dashboard/internal/config.Load]\nat main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]\nat main.go:97: calling [github.com/shitchell/claude-dashboard/internal/ui.NewModel]" ]
+        "github.com/shitchell/claude-dashboard.printUsage" [ fillcolor="lightblue" label="printUsage" penwidth="0.5" tooltip="github.com/shitchell/claude-dashboard.printUsage | defined in main.go:110\nat main.go:111: calling [fmt.Printf]" ]
+        "github.com/shitchell/claude-dashboard.main" [ fillcolor="lightblue" label="main" penwidth="0.5" tooltip="github.com/shitchell/claude-dashboard.main | defined in main.go:29\nat main.go:30: calling [github.com/shitchell/claude-dashboard.run]\nat main.go:32: calling [os.Exit]" ]
         
         subgraph "cluster_fmt" {
-        fontsize="16";
-style="filled";
-fillcolor="#E0FFE1";
+        rank="sink";
+label="fmt";
 URL="/?f=fmt";
 penwidth="0.8";
+fontsize="16";
+style="filled";
+fillcolor="#E0FFE1";
 fontname="Tahoma bold";
-rank="sink";
-label="fmt";
 tooltip="package: fmt";
         
-        "fmt.Fprintf" [ fillcolor="#adedad" label="Fprintf" penwidth="1.5" tooltip="fmt.Fprintf | defined in print.go:222" ]
+        "fmt.Fprintf" [ penwidth="1.5" tooltip="fmt.Fprintf | defined in print.go:222" fillcolor="#adedad" label="Fprintf" ]
         "fmt.Printf" [ penwidth="1.5" tooltip="fmt.Printf | defined in print.go:232" fillcolor="#adedad" label="Printf" ]
         
     }
 
         subgraph "cluster_github.com/charmbracelet/bubbletea" {
-        penwidth="0.8";
-fillcolor="lightyellow";
-fontname="Tahoma bold";
-fontsize="16";
-style="filled";
-rank="sink";
-label="tea";
+        label="tea";
 URL="/?f=github.com/charmbracelet/bubbletea";
 tooltip="package: github.com/charmbracelet/bubbletea";
+penwidth="0.8";
+rank="sink";
+fontsize="16";
+style="filled";
+fillcolor="lightyellow";
+fontname="Tahoma bold";
         
-        "github.com/charmbracelet/bubbletea.WithAltScreen" [ penwidth="1.5" tooltip="github.com/charmbracelet/bubbletea.WithAltScreen | defined in options.go:109" fillcolor="moccasin" label="WithAltScreen" ]
+        "github.com/charmbracelet/bubbletea.WithAltScreen" [ fillcolor="moccasin" label="WithAltScreen" penwidth="1.5" tooltip="github.com/charmbracelet/bubbletea.WithAltScreen | defined in options.go:109" ]
         "github.com/charmbracelet/bubbletea.NewProgram" [ fillcolor="moccasin" label="NewProgram" penwidth="1.5" tooltip="github.com/charmbracelet/bubbletea.NewProgram | defined in tea.go:241" ]
-        "(*github.com/charmbracelet/bubbletea.Program).Run" [ tooltip="(*github.com/charmbracelet/bubbletea.Program).Run | defined in tea.go:578" fillcolor="moccasin" label="(*Program).Run" penwidth="1.5" ]
+        "(*github.com/charmbracelet/bubbletea.Program).Run" [ fillcolor="moccasin" label="(*Program).Run" penwidth="1.5" tooltip="(*github.com/charmbracelet/bubbletea.Program).Run | defined in tea.go:578" ]
         
     }
 
         subgraph "cluster_github.com/shitchell/claude-dashboard/internal/config" {
-        fillcolor="lightyellow";
+        penwidth="0.8";
+style="filled";
+fillcolor="lightyellow";
+label="config";
+fontsize="16";
+fontname="Tahoma bold";
 rank="sink";
 URL="/?f=github.com/shitchell/claude-dashboard/internal/config";
 tooltip="package: github.com/shitchell/claude-dashboard/internal/config";
-fontname="Tahoma bold";
-label="config";
-penwidth="0.8";
-fontsize="16";
-style="filled";
         
-        "github.com/shitchell/claude-dashboard/internal/config.ParseFlags" [ fillcolor="moccasin" label="ParseFlags" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/config.ParseFlags | defined in flags.go:61" ]
+        "github.com/shitchell/claude-dashboard/internal/config.ParseFlags" [ label="ParseFlags" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/config.ParseFlags | defined in flags.go:61" fillcolor="moccasin" ]
         "github.com/shitchell/claude-dashboard/internal/config.Load" [ fillcolor="moccasin" label="Load" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/config.Load | defined in load.go:75" ]
         
     }
 
         subgraph "cluster_github.com/shitchell/claude-dashboard/internal/logging" {
-        penwidth="0.8";
+        style="filled";
+penwidth="0.8";
 fontsize="16";
-style="filled";
 fillcolor="lightyellow";
+fontname="Tahoma bold";
+rank="sink";
 label="logging";
 URL="/?f=github.com/shitchell/claude-dashboard/internal/logging";
 tooltip="package: github.com/shitchell/claude-dashboard/internal/logging";
-fontname="Tahoma bold";
-rank="sink";
         
         "github.com/shitchell/claude-dashboard/internal/logging.Init" [ fillcolor="moccasin" label="Init" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/logging.Init | defined in logging.go:110" ]
-        "github.com/shitchell/claude-dashboard/internal/logging.Close" [ fillcolor="moccasin" label="Close" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/logging.Close | defined in logging.go:302" ]
+        "github.com/shitchell/claude-dashboard/internal/logging.Close" [ penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/logging.Close | defined in logging.go:302" fillcolor="moccasin" label="Close" ]
         "github.com/shitchell/claude-dashboard/internal/logging.Info" [ fillcolor="moccasin" label="Info" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/logging.Info | defined in logging.go:269" ]
         
     }
@@ -101,18 +101,18 @@ label="session";
 URL="/?f=github.com/shitchell/claude-dashboard/internal/session";
 tooltip="package: github.com/shitchell/claude-dashboard/internal/session";
         
-        "github.com/shitchell/claude-dashboard/internal/session.NewService" [ label="NewService" penwidth="1.5" tooltip="github.com/shitchell/claude-dashboard/internal/session.NewService | defined in service.go:48" fillcolor="moccasin" ]
+        "github.com/shitchell/claude-dashboard/internal/session.NewService" [ tooltip="github.com/shitchell/claude-dashboard/internal/session.NewService | defined in service.go:48" fillcolor="moccasin" label="NewService" penwidth="1.5" ]
         
     }
 
         subgraph "cluster_github.com/shitchell/claude-dashboard/internal/ui" {
-        penwidth="0.8";
-fillcolor="lightyellow";
-fontname="Tahoma bold";
+        rank="sink";
 tooltip="package: github.com/shitchell/claude-dashboard/internal/ui";
+penwidth="0.8";
 fontsize="16";
 style="filled";
-rank="sink";
+fillcolor="lightyellow";
+fontname="Tahoma bold";
 label="ui";
 URL="/?f=github.com/shitchell/claude-dashboard/internal/ui";
         
@@ -121,36 +121,36 @@ URL="/?f=github.com/shitchell/claude-dashboard/internal/ui";
     }
 
         subgraph "cluster_os" {
-        fontsize="16";
-style="filled";
-rank="sink";
+        rank="sink";
+penwidth="0.8";
 label="os";
 URL="/?f=os";
 tooltip="package: os";
-penwidth="0.8";
+fontsize="16";
+style="filled";
 fillcolor="#E0FFE1";
 fontname="Tahoma bold";
         
-        "os.Exit" [ fillcolor="#adedad" label="Exit" penwidth="1.5" tooltip="os.Exit | defined in proc.go:62" ]
+        "os.Exit" [ label="Exit" penwidth="1.5" tooltip="os.Exit | defined in proc.go:62" fillcolor="#adedad" ]
         
     }
 
     }
 
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/session.NewService" [ color="saddlebrown" tooltip="at main.go:83: calling [github.com/shitchell/claude-dashboard/internal/session.NewService]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Info" [ color="saddlebrown" tooltip="at main.go:47: calling [github.com/shitchell/claude-dashboard/internal/logging.Info]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "fmt.Printf" [ color="saddlebrown" tooltip="at main.go:59: calling [fmt.Printf]" ]
+    "github.com/shitchell/claude-dashboard.printUsage" -> "fmt.Printf" [ color="saddlebrown" tooltip="at main.go:111: calling [fmt.Printf]" ]
+    "github.com/shitchell/claude-dashboard.main" -> "github.com/shitchell/claude-dashboard.run" [ tooltip="at main.go:30: calling [github.com/shitchell/claude-dashboard.run]" ]
+    "github.com/shitchell/claude-dashboard.main" -> "os.Exit" [ color="saddlebrown" tooltip="at main.go:32: calling [os.Exit]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Init" [ color="saddlebrown" tooltip="at main.go:41: calling [github.com/shitchell/claude-dashboard/internal/logging.Init]" ]
     "github.com/shitchell/claude-dashboard.run" -> "fmt.Fprintf" [ color="saddlebrown" tooltip="at main.go:42: calling [fmt.Fprintf]\nat main.go:74: calling [fmt.Fprintf]\nat main.go:85: calling [fmt.Fprintf]\nat main.go:102: calling [fmt.Fprintf]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard.printUsage" [ tooltip="at main.go:67: calling [github.com/shitchell/claude-dashboard.printUsage]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/ui.NewModel" [ color="saddlebrown" tooltip="at main.go:97: calling [github.com/shitchell/claude-dashboard/internal/ui.NewModel]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/config.ParseFlags" [ color="saddlebrown" tooltip="at main.go:50: calling [github.com/shitchell/claude-dashboard/internal/config.ParseFlags]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/session.NewService" [ color="saddlebrown" tooltip="at main.go:83: calling [github.com/shitchell/claude-dashboard/internal/session.NewService]" ]
     "github.com/shitchell/claude-dashboard.run" -> "github.com/charmbracelet/bubbletea.WithAltScreen" [ color="saddlebrown" tooltip="at main.go:100: calling [github.com/charmbracelet/bubbletea.WithAltScreen]" ]
     "github.com/shitchell/claude-dashboard.run" -> "(*github.com/charmbracelet/bubbletea.Program).Run" [ color="saddlebrown" tooltip="at main.go:101: calling [(*github.com/charmbracelet/bubbletea.Program).Run]" ]
-    "github.com/shitchell/claude-dashboard.main" -> "github.com/shitchell/claude-dashboard.run" [ tooltip="at main.go:30: calling [github.com/shitchell/claude-dashboard.run]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Init" [ color="saddlebrown" tooltip="at main.go:41: calling [github.com/shitchell/claude-dashboard/internal/logging.Init]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Close" [ color="saddlebrown" tooltip="at main.go:45: calling [github.com/shitchell/claude-dashboard/internal/logging.Close]" arrowhead="normalnoneodiamond" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/config.ParseFlags" [ color="saddlebrown" tooltip="at main.go:50: calling [github.com/shitchell/claude-dashboard/internal/config.ParseFlags]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "fmt.Printf" [ color="saddlebrown" tooltip="at main.go:59: calling [fmt.Printf]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Close" [ arrowhead="normalnoneodiamond" color="saddlebrown" tooltip="at main.go:45: calling [github.com/shitchell/claude-dashboard/internal/logging.Close]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard.printUsage" [ tooltip="at main.go:67: calling [github.com/shitchell/claude-dashboard.printUsage]" ]
     "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/config.Load" [ color="saddlebrown" tooltip="at main.go:72: calling [github.com/shitchell/claude-dashboard/internal/config.Load]" ]
     "github.com/shitchell/claude-dashboard.run" -> "github.com/charmbracelet/bubbletea.NewProgram" [ color="saddlebrown" tooltip="at main.go:100: calling [github.com/charmbracelet/bubbletea.NewProgram]" ]
-    "github.com/shitchell/claude-dashboard.main" -> "os.Exit" [ color="saddlebrown" tooltip="at main.go:32: calling [os.Exit]" ]
-    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/logging.Info" [ color="saddlebrown" tooltip="at main.go:47: calling [github.com/shitchell/claude-dashboard/internal/logging.Info]" ]
-    "github.com/shitchell/claude-dashboard.printUsage" -> "fmt.Printf" [ color="saddlebrown" tooltip="at main.go:111: calling [fmt.Printf]" ]
+    "github.com/shitchell/claude-dashboard.run" -> "github.com/shitchell/claude-dashboard/internal/ui.NewModel" [ color="saddlebrown" tooltip="at main.go:97: calling [github.com/shitchell/claude-dashboard/internal/ui.NewModel]" ]
 }

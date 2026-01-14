@@ -28,6 +28,11 @@ var ResumeSessionIDRegex = regexp.MustCompile(`(?:--resume[=\s]|-r[=\s])([a-zA-Z
 //  2. Discover Claude processes (PID -> Process with TTY)
 //  3. Memory scan PIDs to find session IDs (PID -> sessionID)
 //  4. Derive session-to-pane mapping on-the-fly via PID -> TTY -> pane
+//
+// Caching optimization:
+//   - PIDCache stores PID -> session file mappings to avoid rescanning known PIDs
+//   - SessionWatcher uses fsnotify to detect new session files (e.g., after /clear)
+//   - forceFullScan can be set to bypass the cache (triggered by 'r' key)
 type Matcher struct {
 	mu sync.RWMutex
 
@@ -61,21 +66,56 @@ type Matcher struct {
 	// memoryScanner is an optional custom scanner for testing.
 	// If nil, real memory scanning is used.
 	memoryScanner MemoryScannerInterface
+
+	// pidCache caches PID -> session file mappings to avoid redundant memory scans.
+	// If nil, caching is disabled.
+	pidCache *PIDCache
+
+	// sessionWatcher monitors session directories for new .jsonl files.
+	// If nil, fsnotify watching is disabled.
+	sessionWatcher *SessionWatcher
+
+	// forceFullScan when true bypasses the cache and rescans all PIDs.
+	// This is set by SetForceFullScan() and cleared after each Refresh().
+	forceFullScan bool
 }
 
 // NewMatcher creates a new Matcher with default runners.
+// Initializes PID cache and session watcher for optimized scanning.
 func NewMatcher() *Matcher {
-	return &Matcher{
+	m := &Matcher{
 		paneMap:          NewPaneMap(),
 		processList:      NewProcessList(),
 		claudeProcesses:  make([]ClaudeProcess, 0),
 		pidToSessionID:   make(map[int]string),
 		sessionFilePaths: make([]string, 0),
 	}
+
+	// Initialize PID cache
+	m.pidCache = NewPIDCache()
+	if err := m.pidCache.Load(); err != nil {
+		logging.Warn("Matcher: Failed to load PID cache: %v", err)
+	}
+
+	// Initialize session watcher with callback to handle new files
+	var err error
+	m.sessionWatcher, err = NewSessionWatcher(func(path string) {
+		// New session file detected - invalidate cache for affected PIDs
+		logging.Info("Matcher: New session file detected by watcher: %s", path)
+		m.handleNewSessionFile(path)
+	})
+	if err != nil {
+		logging.Warn("Matcher: Failed to create session watcher: %v", err)
+	} else {
+		m.sessionWatcher.Start()
+	}
+
+	return m
 }
 
 // NewMatcherWithRunners creates a new Matcher with custom runners.
 // This is primarily used for testing with mock output.
+// Note: PID cache and session watcher are NOT initialized for test matchers.
 func NewMatcherWithRunners(processRunner ProcessRunner, tmuxRunner CommandRunner) *Matcher {
 	return &Matcher{
 		paneMap:          NewPaneMapWithRunner(tmuxRunner),
@@ -278,27 +318,153 @@ func (m *Matcher) logDuplicateMappings() {
 
 // scanAndMatchSessions performs memory scanning to match PIDs to session IDs.
 // This is called with the mutex already held.
+//
+// Caching behavior:
+//   - If forceFullScan is true, clears cache and scans all PIDs
+//   - Otherwise, uses cache for known PIDs and only scans uncached PIDs
+//   - Updates cache with new scan results
 func (m *Matcher) scanAndMatchSessions(pids []int) {
-	logging.Info("scanAndMatchSessions: Starting memory scan for %d PIDs with %d session paths",
-		len(pids), len(m.sessionFilePaths))
+	logging.Info("scanAndMatchSessions: Starting for %d PIDs with %d session paths (forceFullScan=%v)",
+		len(pids), len(m.sessionFilePaths), m.forceFullScan)
 
-	var pidToSession map[int]string
-
-	if m.memoryScanner != nil {
-		// Use mock scanner for testing
-		pidToSession = m.memoryScanner.ScanAllPIDsForSessions(pids, m.sessionFilePaths)
-	} else {
-		// Use real memory scanning with NULL-prefix approach
-		pidToSession = ScanAllPIDsForSessions(pids, m.sessionFilePaths)
+	// Handle force full scan (cache buster from 'r' key)
+	if m.forceFullScan && m.pidCache != nil {
+		logging.Info("scanAndMatchSessions: Force full scan requested, clearing cache")
+		m.pidCache.Clear()
+		m.forceFullScan = false // Clear the flag
 	}
 
-	// Store results
-	for pid, sessionID := range pidToSession {
-		m.pidToSessionID[pid] = sessionID
-		logging.Info("scanAndMatchSessions: PID %d -> session %s", pid, sessionID)
+	// Determine which PIDs need scanning
+	var pidsToScan []int
+	if m.pidCache != nil {
+		// Use cached results for known PIDs
+		cachedMapping := m.pidCache.GetCachedMapping()
+		for pid, sessionID := range cachedMapping {
+			// Only use cached values for PIDs that are still in our list
+			for _, p := range pids {
+				if p == pid {
+					m.pidToSessionID[pid] = sessionID
+					logging.Debug("scanAndMatchSessions: Using cached result for PID %d -> %s", pid, sessionID)
+					break
+				}
+			}
+		}
+
+		// Get PIDs not in cache
+		pidsToScan = m.pidCache.GetUncachedPIDs(pids)
+		logging.Info("scanAndMatchSessions: %d PIDs cached, %d need scanning", len(pids)-len(pidsToScan), len(pidsToScan))
+	} else {
+		// No cache, scan all PIDs
+		pidsToScan = pids
+	}
+
+	// Perform memory scanning for uncached PIDs
+	if len(pidsToScan) > 0 {
+		var pidToSession map[int]string
+
+		if m.memoryScanner != nil {
+			// Use mock scanner for testing
+			pidToSession = m.memoryScanner.ScanAllPIDsForSessions(pidsToScan, m.sessionFilePaths)
+		} else {
+			// Use real memory scanning with NULL-prefix approach
+			pidToSession = ScanAllPIDsForSessions(pidsToScan, m.sessionFilePaths)
+		}
+
+		// Store results and update cache
+		for pid, sessionID := range pidToSession {
+			m.pidToSessionID[pid] = sessionID
+			logging.Info("scanAndMatchSessions: PID %d -> session %s", pid, sessionID)
+
+			// Update cache with session file path
+			if m.pidCache != nil {
+				sessionFile := m.findSessionFilePath(sessionID)
+				if sessionFile != "" {
+					m.pidCache.Set(pid, sessionFile)
+				}
+			}
+		}
+
+		// Save cache if dirty
+		if m.pidCache != nil && m.pidCache.IsDirty() {
+			if err := m.pidCache.Save(); err != nil {
+				logging.Warn("scanAndMatchSessions: Failed to save PID cache: %v", err)
+			}
+		}
+	}
+
+	// Update session watcher with directories from session file paths
+	if m.sessionWatcher != nil {
+		dirs := m.extractSessionDirs()
+		m.sessionWatcher.SyncWatchedDirs(dirs)
 	}
 
 	logging.Info("scanAndMatchSessions: Complete. Matched %d PIDs to sessions", len(m.pidToSessionID))
+}
+
+// findSessionFilePath finds the full path for a session ID.
+func (m *Matcher) findSessionFilePath(sessionID string) string {
+	for _, path := range m.sessionFilePaths {
+		if strings.HasSuffix(path, "/"+sessionID+".jsonl") {
+			return path
+		}
+	}
+	return ""
+}
+
+// extractSessionDirs extracts unique directories from session file paths.
+func (m *Matcher) extractSessionDirs() []string {
+	dirSet := make(map[string]struct{})
+	for _, path := range m.sessionFilePaths {
+		dir := filepath.Dir(path)
+		dirSet[dir] = struct{}{}
+	}
+
+	dirs := make([]string, 0, len(dirSet))
+	for dir := range dirSet {
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+// handleNewSessionFile is called by the session watcher when a new .jsonl file is created.
+// This typically happens after /clear is executed in Claude.
+func (m *Matcher) handleNewSessionFile(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Add the new path to our session file paths
+	found := false
+	for _, p := range m.sessionFilePaths {
+		if p == path {
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.sessionFilePaths = append(m.sessionFilePaths, path)
+		logging.Info("Matcher: Added new session file to paths: %s", path)
+	}
+
+	// Clear cache entries that might be stale due to /clear
+	// The directory of the new file indicates which project was affected
+	dir := filepath.Dir(path)
+
+	if m.pidCache != nil {
+		// Check each cached entry to see if it's in the same directory
+		// and might need re-scanning
+		cachedDirs := m.pidCache.GetAllSessionDirs()
+		for _, cachedDir := range cachedDirs {
+			if cachedDir == dir {
+				// This directory has a new file - clear all entries for it
+				// to force a rescan on next Refresh()
+				logging.Info("Matcher: Invalidating cache entries in directory %s due to new session file", dir)
+				// Note: We can't easily clear by directory, so set forceFullScan
+				// for a simpler but more aggressive approach
+				m.forceFullScan = true
+				break
+			}
+		}
+	}
 }
 
 // FindClaudeProcesses returns all detected Claude processes.
@@ -495,4 +661,49 @@ func (cp *ClaudeProcess) String() string {
 	}
 
 	return "ClaudeProcess{" + strings.Join(parts, ", ") + "}"
+}
+
+// SetForceFullScan sets the flag to force a full memory scan on next Refresh().
+// This is typically called when the user presses 'r' for manual refresh.
+// The flag is cleared automatically after the scan completes.
+func (m *Matcher) SetForceFullScan(force bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forceFullScan = force
+	logging.Debug("Matcher: SetForceFullScan(%v)", force)
+}
+
+// Close releases resources used by the Matcher.
+// This should be called when the Matcher is no longer needed.
+func (m *Matcher) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Save PID cache
+	if m.pidCache != nil && m.pidCache.IsDirty() {
+		if err := m.pidCache.Save(); err != nil {
+			logging.Warn("Matcher.Close: Failed to save PID cache: %v", err)
+		}
+	}
+
+	// Stop session watcher
+	if m.sessionWatcher != nil {
+		if err := m.sessionWatcher.Stop(); err != nil {
+			logging.Warn("Matcher.Close: Failed to stop session watcher: %v", err)
+			return err
+		}
+	}
+
+	logging.Debug("Matcher: Closed successfully")
+	return nil
+}
+
+// GetPIDCache returns the PID cache (for testing/debugging).
+func (m *Matcher) GetPIDCache() *PIDCache {
+	return m.pidCache
+}
+
+// GetSessionWatcher returns the session watcher (for testing/debugging).
+func (m *Matcher) GetSessionWatcher() *SessionWatcher {
+	return m.sessionWatcher
 }

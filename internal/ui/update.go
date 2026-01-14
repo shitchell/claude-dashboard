@@ -184,8 +184,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		return m.selectSession()
 
-	// Refresh
+	// Refresh - force full memory rescan (cache buster)
 	case key.Matches(msg, m.keys.Refresh):
+		// Set flag for full rescan, bypassing the PID cache
+		if m.matcher != nil {
+			m.matcher.SetForceFullScan(true)
+		}
 		return m, m.refreshSessionsCmd()
 
 	// Toggle sort

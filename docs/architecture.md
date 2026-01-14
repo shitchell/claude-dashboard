@@ -185,12 +185,45 @@ classDiagram
         -claudeProcesses []ClaudeProcess
         -pidToSessionID map[int]string
         -sessionFilePaths []string
+        -pidCache *PIDCache
+        -sessionWatcher *SessionWatcher
+        -forceFullScan bool
         +Refresh() error
         +SetSessionFilePaths(paths []string)
         +MatchSessionToPane(session) *Pane
         +HasRunningProcess(session) bool
         +FindClaudeProcesses() []ClaudeProcess
         +GetPIDToSessionID() map[int]string
+        +SetForceFullScan(force bool)
+        +Close() error
+    }
+
+    class PIDCache {
+        -mu sync.RWMutex
+        -path string
+        -version int
+        -entries map[int]PIDCacheEntry
+        -dirty bool
+        +Load() error
+        +Save() error
+        +Get(pid int) string, bool
+        +Set(pid int, sessionFile string)
+        +Remove(pid int)
+        +ValidatePIDs()
+        +GetUncachedPIDs(allPIDs []int) []int
+        +GetCachedMapping() map[int]string
+        +Clear()
+    }
+
+    class SessionWatcher {
+        -watcher *fsnotify.Watcher
+        -dirs map[string]bool
+        -onNewFile func(path string)
+        +WatchDirectory(dir string) error
+        +UnwatchDirectory(dir string) error
+        +Start()
+        +Stop() error
+        +SyncWatchedDirs(newDirs []string)
     }
 
     class PaneMap {
@@ -334,6 +367,8 @@ classDiagram
     Matcher --> ProcessList: uses
     Matcher --> ClaudeProcess: tracks
     Matcher --> Pane: matches to
+    Matcher --> PIDCache: caches PIDs
+    Matcher --> SessionWatcher: watches dirs
 
     PaneMap --> Pane: contains
 
@@ -515,12 +550,39 @@ classDiagram
   - Uses memory scanning as sole source for session-to-PID mapping
   - Session-to-pane derived on-the-fly: sessionID -> PID -> TTY -> pane
   - Uses `refreshing` flag to prevent concurrent refresh cycles (memory scanning is slow)
+  - **PID Caching**: Uses PIDCache to avoid redundant memory scans for known PIDs
+  - **fsnotify Integration**: Uses SessionWatcher to detect new session files (e.g., after /clear)
   - **Refresh()**: Updates all mappings (panes, processes, memory scan)
   - **MatchSessionToPane()**: Finds pane for session via PID lookup
   - **HasRunningProcess()**: Checks if session is owned by a PID
   - **FindClaudeProcesses()**: Identifies Claude processes
   - **SetSessionFilePaths()**: Configures paths for memory scanning
+  - **SetForceFullScan()**: Bypasses cache on next refresh (triggered by 'r' key)
+  - **Close()**: Releases resources (saves cache, stops watcher)
 - **ClaudeProcess**: A process running Claude with extracted SessionID
+
+#### `pid_cache.go` - PID-to-Session Caching
+- **PIDCache**: Thread-safe cache for PID -> session file mappings
+  - Stored in XDG_RUNTIME_DIR (ephemeral, cleared on reboot)
+  - Fallback to /tmp/claude-dashboard-$UID/ if XDG_RUNTIME_DIR not set
+  - Uses flock for concurrent write safety
+  - Version field for cache format migration
+  - **Load()**: Loads cache from disk, validates PIDs still exist
+  - **Save()**: Atomic write (temp file + rename) with flock
+  - **Get()/Set()**: In-memory cache operations
+  - **ValidatePIDs()**: Removes entries for dead processes
+  - **GetUncachedPIDs()**: Returns PIDs not in cache for scanning
+  - **Clear()**: Clears all entries (cache buster)
+
+#### `session_watcher.go` - fsnotify Session File Watcher
+- **SessionWatcher**: Monitors session directories for new .jsonl files
+  - Uses fsnotify for efficient file system event monitoring
+  - Detects CREATE events for UUID-patterned .jsonl files
+  - Triggers callback when new session files appear (e.g., after /clear)
+  - **WatchDirectory()**: Adds directory to watch list
+  - **SyncWatchedDirs()**: Syncs watched dirs with current session paths
+  - **Start()**: Starts event processing goroutine
+  - **Stop()**: Stops watcher and releases resources
 
 #### `navigate.go` - Pane Navigation
 - **Navigator**: Switches to or creates tmux panes
@@ -973,9 +1035,11 @@ The codebase includes test files for most packages with:
 2. **Lazy Last-Line Reading**: Use ParseLastEntry() for status checks
 3. **Process Memory Matching**: Cache PID-to-SessionID mappings
 4. **Parallel PID Scanning**: Worker pool with 8 goroutines for concurrent memory scanning (~3x speedup)
-5. **Batch Status Updates**: UpdateAllSessionStatuses() refreshes matcher once
-6. **Cursor Position Preservation**: Survives session list refresh
-7. **Buffer Management**: Custom buffer sizes for large JSONL files
+5. **PID Cache**: Persist PID -> session mappings to avoid rescanning known PIDs across refreshes
+6. **fsnotify Watcher**: Instant detection of new session files (e.g., after /clear) without polling
+7. **Batch Status Updates**: UpdateAllSessionStatuses() refreshes matcher once
+8. **Cursor Position Preservation**: Survives session list refresh
+9. **Buffer Management**: Custom buffer sizes for large JSONL files
 
 ---
 

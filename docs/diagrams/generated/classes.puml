@@ -521,10 +521,16 @@ namespace tmux {
         - processRunner ProcessRunner
         - tmuxRunner CommandRunner
         - memoryScanner MemoryScannerInterface
+        - pidCache *PIDCache
+        - sessionWatcher *SessionWatcher
+        - forceFullScan bool
 
         - findAndMatchClaudeProcesses() 
         - logDuplicateMappings() 
         - scanAndMatchSessions(pids []int) 
+        - findSessionFilePath(sessionID string) string
+        - extractSessionDirs() []string
+        - handleNewSessionFile(path string) 
 
         + SetMemoryScanner(scanner MemoryScannerInterface) 
         + SetSessionFilePaths(paths []string) 
@@ -537,6 +543,10 @@ namespace tmux {
         + GetPIDToSessionID() <font color=blue>map</font>[int]string
         + FindProcessBySessionID(sessionID string) *ClaudeProcess
         + FindProcessesByCWD(cwd string) []ClaudeProcess
+        + SetForceFullScan(force bool) 
+        + Close() error
+        + GetPIDCache() *PIDCache
+        + GetSessionWatcher() *SessionWatcher
 
     }
     class "MemoryRegion" << (S,Aquamarine) >> {
@@ -573,6 +583,41 @@ namespace tmux {
         + BuildResumeCommand(sessionID string, cwd string) []string
         + IsAvailable() bool
         + Method() string
+
+    }
+    class "PIDCache" << (S,Aquamarine) >> {
+        - mu sync.RWMutex
+        - path string
+        - version int
+        - entries <font color=blue>map</font>[int]PIDCacheEntry
+        - dirty bool
+
+        - validatePIDsLocked() 
+
+        + Path() string
+        + Load() error
+        + Save() error
+        + Get(pid int) (string, bool)
+        + Set(pid int, sessionFile string) 
+        + Remove(pid int) 
+        + ValidatePIDs() 
+        + GetUncachedPIDs(allPIDs []int) []int
+        + GetCachedMapping() <font color=blue>map</font>[int]string
+        + Clear() 
+        + Size() int
+        + IsDirty() bool
+        + MarkClean() 
+        + GetAllSessionDirs() []string
+
+    }
+    class "PIDCacheEntry" << (S,Aquamarine) >> {
+        + SessionFile string
+        + CachedAt time.Time
+
+    }
+    class "PIDCacheFile" << (S,Aquamarine) >> {
+        + Version int
+        + Entries <font color=blue>map</font>[string]PIDCacheEntry
 
     }
     class "Pane" << (S,Aquamarine) >> {
@@ -633,6 +678,29 @@ namespace tmux {
     interface "ProcessRunner"  {
         + ListProcesses() ([]byte, error)
         + ReadCWD(pid int) (string, error)
+
+    }
+    class "SessionWatcher" << (S,Aquamarine) >> {
+        - mu sync.Mutex
+        - watcher *fsnotify.Watcher
+        - dirs <font color=blue>map</font>[string]bool
+        - onNewFile <font color=blue>func</font>(string) 
+        - onError <font color=blue>func</font>(error) 
+        - done <font color=blue>chan</font> <font color=blue>struct</font>{}
+        - running bool
+
+        - handleEvent(event fsnotify.Event) 
+        - handleError(err error) 
+
+        + SetErrorHandler(handler <font color=blue>func</font>(error) ) 
+        + WatchDirectory(dir string) error
+        + UnwatchDirectory(dir string) error
+        + WatchedDirs() []string
+        + Start() 
+        + Stop() error
+        + IsRunning() bool
+        + WatchDirectories(dirs []string) 
+        + SyncWatchedDirs(newDirs []string) 
 
     }
     class "defaultProcessRunner" << (S,Aquamarine) >> {

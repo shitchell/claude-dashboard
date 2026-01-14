@@ -35,6 +35,19 @@ const (
 	CacheFileName = "sessions.json"
 )
 
+// PID cache constants control PID-to-session caching behavior.
+const (
+	// PIDCacheVersion is incremented when the PID cache format changes,
+	// forcing a cache rebuild.
+	PIDCacheVersion = 1
+
+	// PIDCacheFileName is the name of the PID cache file.
+	PIDCacheFileName = "pid-cache.json"
+
+	// PIDCacheRuntimeDir is the subdirectory name in XDG_RUNTIME_DIR.
+	PIDCacheRuntimeDir = "claude-dashboard"
+)
+
 // Refresh constants control how often session data is refreshed.
 const (
 	// DefaultRefreshInterval is the default time between automatic
