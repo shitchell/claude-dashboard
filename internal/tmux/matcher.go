@@ -598,25 +598,31 @@ func (m *Matcher) MatchSessionToPane(sess *session.Session) *Pane {
 // HasRunningProcess returns true if there is a Claude process running
 // that owns the given session (determined by memory scanning).
 func (m *Matcher) HasRunningProcess(sess *session.Session) bool {
+	return m.GetProcessPID(sess) != 0
+}
+
+// GetProcessPID returns the PID of the Claude process for a session.
+// Returns 0 if no process is running for the session.
+func (m *Matcher) GetProcessPID(sess *session.Session) int {
 	if sess == nil {
-		return false
+		return 0
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	logging.Info("HasRunningProcess: checking sess.ID=%s, pidToSessionID has %d entries", sess.ID, len(m.pidToSessionID))
+	logging.Debug("GetProcessPID: checking sess.ID=%s, pidToSessionID has %d entries", sess.ID, len(m.pidToSessionID))
 
 	// Check if any PID owns this session
 	for pid, sessionID := range m.pidToSessionID {
 		if sessionID == sess.ID {
-			logging.Info("HasRunningProcess: FOUND - PID %d owns session %s", pid, sess.ID)
-			return true
+			logging.Debug("GetProcessPID: FOUND - PID %d owns session %s", pid, sess.ID)
+			return pid
 		}
 	}
 
-	logging.Debug("HasRunningProcess: NOT FOUND - session %s not in pidToSessionID", sess.ID)
-	return false
+	logging.Debug("GetProcessPID: NOT FOUND - session %s not in pidToSessionID", sess.ID)
+	return 0
 }
 
 // GetPaneByID returns the pane with the given ID.

@@ -266,7 +266,7 @@ classDiagram
     }
 
     class StateModule {
-        +DetermineStatus(lastEntry, hasProcess) Status
+        +DetermineStatus(pid, jsonlPath) Status
         +DetermineStatusFromSession(session, matcher, parser) Status
         +UpdateSessionStatus(session, matcher, parser) *Session
         +UpdateAllSessionStatuses(sessions, matcher, parser)
@@ -601,13 +601,19 @@ classDiagram
     - `switch-client`: Client switching (cross-session)
 
 #### `state.go` - Status Determination
-- **DetermineStatus()**: Determines session status from last entry + running process
-  - Active: Claude is responding or tool is running
-  - Idle: Waiting for input or session completed
-  - Exited: No running process
-  - Uses message types and recency heuristics
+- **DetermineStatus()**: Determines session status using socket-based detection
+  - Active: 2+ sockets (API streaming), or 1 socket with recent JSONL mtime
+  - Idle: 0 sockets, or 1 socket with stale JSONL mtime (background heartbeat)
+  - Exited: No running process (PID == 0)
+  - Uses `/proc/<pid>/fd/` socket counting (Linux) with mtime-based heartbeat filtering
 - **UpdateSessionStatus()**: Updates a session's status and TmuxPane fields
 - **UpdateAllSessionStatuses()**: Bulk status update (refreshes matcher once)
+
+#### `socket_check_linux.go` / `socket_check_stub.go` - Socket Detection
+- **CountProcessSockets()**: Counts open socket FDs in `/proc/<pid>/fd/`
+- **GetFileMtimeAge()**: Returns how long ago the JSONL file was modified
+- **IsProcessActive()**: Combines socket count + mtime to determine activity
+- Platform-specific: Linux uses `/proc`, stub returns fallback for other platforms
 
 #### `exec.go` - Command Execution
 - **CommandRunner interface**: Abstraction for executing tmux commands
@@ -828,7 +834,9 @@ Model.handleSessionsLoaded()
           |   +-> Match processes to panes
           +-> For each Session:
               +-> UpdateSessionStatus()
-                  |-> DetermineStatus(lastEntry, hasProcess)
+                  |-> DetermineStatus(pid, jsonlPath)
+                  |   +-> CountProcessSockets(pid)
+                  |   +-> GetFileMtimeAge(jsonlPath)
                   |   +-> Return: Active/Idle/Exited
                   +-> Find matching pane ID
 ```

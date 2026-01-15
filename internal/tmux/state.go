@@ -1,143 +1,60 @@
 package tmux
 
 import (
-	"time"
-
 	"github.com/shitchell/claude-dashboard/internal/logging"
 	"github.com/shitchell/claude-dashboard/internal/session"
 )
 
-// StatusInactivityThreshold is the duration after which a session
-// is considered idle if no recent activity is detected.
-// A session waiting for user input with no recent file activity
-// is considered idle.
-const StatusInactivityThreshold = 30 * time.Second
-
 // DetermineStatus determines the status of a Claude session based on
-// the last entry in its JSONL file and whether a matching process exists.
+// socket activity and process state.
 //
-// Status determination logic:
+// Status determination logic (Linux):
+//   - Uses /proc/<pid>/fd/ to count open sockets
+//   - Active: 2+ sockets, OR 1 socket with recent JSONL mtime
+//   - Idle: 0 sockets, OR 1 socket with stale JSONL mtime (background heartbeat)
 //
-// 1. StatusExited: No Claude process is running for this session.
-//    This is the default when hasProcess is false.
-//
-// 2. StatusActive: A Claude process is running AND:
-//    - The last entry is an assistant message (Claude is responding), OR
-//    - The last entry is a user tool result (tool execution in progress), OR
-//    - The last entry is within the inactivity threshold
-//
-// 3. StatusIdle: A Claude process is running AND:
-//    - The last entry is a regular user message (waiting for assistant), OR
-//    - The last entry is a result message (session completed but pane still open), OR
-//    - The last entry is stale (older than inactivity threshold)
+// Status determination logic (non-Linux fallback):
+//   - Falls back to JSONL-based heuristics
 //
 // Parameters:
-//   - lastEntry: The last entry from the session's JSONL file. Can be nil
-//     if the file couldn't be parsed.
-//   - hasProcess: Whether a Claude process is running for this session.
+//   - pid: The process ID of the Claude process (0 if no process)
+//   - jsonlPath: Path to the session's JSONL file
 //
 // Returns the determined status.
-func DetermineStatus(lastEntry *session.LastEntry, hasProcess bool) session.Status {
+func DetermineStatus(pid int, jsonlPath string) session.Status {
 	// No process running = exited
-	if !hasProcess {
+	if pid == 0 {
 		return session.StatusExited
 	}
 
-	// If we couldn't parse the last entry, assume idle
-	// (process is running but we don't know what it's doing)
-	if lastEntry == nil {
-		return session.StatusIdle
-	}
-
-	// Check if session has a completion result
-	if lastEntry.IsComplete {
-		// Session completed but pane still open = idle
-		return session.StatusIdle
-	}
-
-	// Determine status based on message type
-	switch lastEntry.Type {
-	case session.MessageTypeAssistant:
-		// Claude is responding = active
+	// Use socket-based detection (Linux) or fallback (other platforms)
+	if IsProcessActive(pid, jsonlPath) {
 		return session.StatusActive
-
-	case session.MessageTypeUser:
-		if lastEntry.IsToolResult {
-			// Tool execution in progress = active
-			return session.StatusActive
-		}
-		// Regular user message = waiting for assistant = idle
-		return session.StatusIdle
-
-	case session.MessageTypeSystem:
-		// System messages like init or api_error
-		// Check if it's recent activity
-		if isRecentActivity(lastEntry.Timestamp) {
-			return session.StatusActive
-		}
-		return session.StatusIdle
-
-	case session.MessageTypeResult:
-		// Session has a result = completed = idle
-		return session.StatusIdle
-
-	case session.MessageTypeSummary:
-		// Summary messages don't indicate activity state
-		// Check recency as a fallback
-		if isRecentActivity(lastEntry.Timestamp) {
-			return session.StatusActive
-		}
-		return session.StatusIdle
-
-	default:
-		// Unknown message type - use recency heuristic
-		if isRecentActivity(lastEntry.Timestamp) {
-			return session.StatusActive
-		}
-		return session.StatusIdle
 	}
-}
-
-// isRecentActivity returns true if the timestamp is within the
-// inactivity threshold from now.
-func isRecentActivity(timestamp time.Time) bool {
-	if timestamp.IsZero() {
-		return false
-	}
-	return time.Since(timestamp) < StatusInactivityThreshold
+	return session.StatusIdle
 }
 
 // DetermineStatusFromSession is a convenience function that determines
-// the status of a session using the matcher and parser.
+// the status of a session using the matcher.
 //
 // It:
-// 1. Checks if a Claude process is running for the session
-// 2. Parses the last entry from the session's JSONL file
-// 3. Determines the appropriate status
+// 1. Gets the PID of the Claude process for the session
+// 2. Uses socket-based detection to determine if active or idle
 //
 // This is the main entry point for status determination in the UI layer.
 func DetermineStatusFromSession(
 	sess *session.Session,
 	matcher *Matcher,
-	parser *session.Parser,
+	parser *session.Parser, // kept for API compatibility, unused
 ) session.Status {
 	if sess == nil {
 		return session.StatusExited
 	}
 
-	// Check if process is running
-	hasProcess := matcher.HasRunningProcess(sess)
+	// Get the PID for this session
+	pid := matcher.GetProcessPID(sess)
 
-	// Parse last entry (ignore errors - will treat as nil)
-	var lastEntry *session.LastEntry
-	if parser != nil && sess.FilePath != "" {
-		entry, err := parser.ParseLastEntry(sess.FilePath)
-		if err == nil {
-			lastEntry = entry
-		}
-	}
-
-	return DetermineStatus(lastEntry, hasProcess)
+	return DetermineStatus(pid, sess.FilePath)
 }
 
 // UpdateSessionStatus updates the Status and TmuxPane fields of a session

@@ -540,6 +540,7 @@ namespace tmux {
         + FindClaudeProcesses() []ClaudeProcess
         + MatchSessionToPane(sess *session.Session) *Pane
         + HasRunningProcess(sess *session.Session) bool
+        + GetProcessPID(sess *session.Session) int
         + GetPaneByID(id string) *Pane
         + AllPanes() []*Pane
         + GetPIDToSessionID() <font color=blue>map</font>[int]string
