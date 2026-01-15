@@ -1,16 +1,19 @@
 package tmux
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/shitchell/claude-dashboard/internal/constants"
 	"github.com/shitchell/claude-dashboard/internal/logging"
+	"golang.org/x/sys/unix"
 )
 
 // PIDCacheEntry represents a cached PID-to-session mapping.
@@ -386,4 +389,265 @@ func (c *PIDCache) GetAllSessionDirs() []string {
 		dirs = append(dirs, dir)
 	}
 	return dirs
+}
+
+// ValidateOnLoad checks cached entries for staleness by comparing session file
+// modification times against birth times of untracked files in the same directory.
+// This detects stale mappings caused by /clear while the dashboard was closed.
+//
+// The algorithm:
+//  1. Group entries by session file's parent directory
+//  2. For each directory, find untracked .jsonl files (UUID-patterned, not agent-*)
+//  3. Get birth time of untracked files
+//  4. If session mtime <= newest untracked birth time, rescan the PID
+//  5. Update cache with new session files from rescan
+//
+// The rescanFunc callback performs memory scanning for a single PID and returns
+// the new session file path if found, or "" if no match.
+func (c *PIDCache) ValidateOnLoad(rescanFunc func(pid int) string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.entries) == 0 {
+		logging.Debug("PIDCache.ValidateOnLoad: No entries to validate")
+		return
+	}
+
+	logging.Info("PIDCache.ValidateOnLoad: Validating %d entries for staleness", len(c.entries))
+
+	// Group entries by directory
+	dirToEntries := make(map[string][]int) // dir -> list of PIDs
+	for pid, entry := range c.entries {
+		dir := filepath.Dir(entry.SessionFile)
+		dirToEntries[dir] = append(dirToEntries[dir], pid)
+	}
+
+	logging.Debug("PIDCache.ValidateOnLoad: %d unique directories", len(dirToEntries))
+
+	var rescannedCount, updatedCount int
+
+	for dir, pids := range dirToEntries {
+		// Get all session files in this directory
+		allFiles, err := listSessionFilesInDir(dir)
+		if err != nil {
+			logging.Warn("PIDCache.ValidateOnLoad: Failed to list files in %s: %v", dir, err)
+			continue
+		}
+
+		// Build set of tracked files (files in cache)
+		trackedFiles := make(map[string]struct{})
+		for _, pid := range pids {
+			entry := c.entries[pid]
+			trackedFiles[entry.SessionFile] = struct{}{}
+		}
+
+		// Find untracked files
+		var untrackedFiles []string
+		for _, f := range allFiles {
+			if _, tracked := trackedFiles[f]; !tracked {
+				untrackedFiles = append(untrackedFiles, f)
+			}
+		}
+
+		if len(untrackedFiles) == 0 {
+			logging.Debug("PIDCache.ValidateOnLoad: %s - no untracked files", dir)
+			continue
+		}
+
+		logging.Debug("PIDCache.ValidateOnLoad: %s - %d untracked files", dir, len(untrackedFiles))
+
+		// Get newest birth time among untracked files
+		var newestBirthTime time.Time
+		for _, f := range untrackedFiles {
+			birthTime, err := getBirthTime(f)
+			if err != nil {
+				logging.Debug("PIDCache.ValidateOnLoad: Failed to get birth time for %s: %v", f, err)
+				continue
+			}
+			if birthTime.After(newestBirthTime) {
+				newestBirthTime = birthTime
+			}
+		}
+
+		if newestBirthTime.IsZero() {
+			logging.Debug("PIDCache.ValidateOnLoad: %s - could not determine birth times", dir)
+			continue
+		}
+
+		logging.Debug("PIDCache.ValidateOnLoad: %s - newest untracked birth time: %v", dir, newestBirthTime)
+
+		// Check each cached entry in this directory
+		for _, pid := range pids {
+			entry := c.entries[pid]
+
+			// Get mtime of the cached session file
+			info, err := os.Stat(entry.SessionFile)
+			if err != nil {
+				logging.Debug("PIDCache.ValidateOnLoad: Cannot stat %s: %v", entry.SessionFile, err)
+				// File doesn't exist - mark for rescan
+				rescannedCount++
+				newSessionFile := rescanFunc(pid)
+				if newSessionFile != "" {
+					c.entries[pid] = PIDCacheEntry{
+						SessionFile: newSessionFile,
+						CachedAt:    time.Now(),
+					}
+					c.dirty = true
+					updatedCount++
+					logging.Info("PIDCache.ValidateOnLoad: PID %d rescanned: %s -> %s",
+						pid, entry.SessionFile, newSessionFile)
+				} else {
+					// Rescan found nothing - remove entry
+					delete(c.entries, pid)
+					c.dirty = true
+					logging.Info("PIDCache.ValidateOnLoad: PID %d removed (no session found)", pid)
+				}
+				continue
+			}
+
+			sessionMtime := info.ModTime()
+
+			// If session mtime <= newest untracked birth time, the cached session
+			// might be stale (a newer session was created after this one was last modified)
+			if !sessionMtime.After(newestBirthTime) {
+				logging.Info("PIDCache.ValidateOnLoad: PID %d may be stale (mtime %v <= birth %v), rescanning",
+					pid, sessionMtime, newestBirthTime)
+
+				rescannedCount++
+				newSessionFile := rescanFunc(pid)
+				if newSessionFile != "" && newSessionFile != entry.SessionFile {
+					c.entries[pid] = PIDCacheEntry{
+						SessionFile: newSessionFile,
+						CachedAt:    time.Now(),
+					}
+					c.dirty = true
+					updatedCount++
+					logging.Info("PIDCache.ValidateOnLoad: PID %d updated: %s -> %s",
+						pid, entry.SessionFile, newSessionFile)
+				} else if newSessionFile == "" {
+					// Rescan found nothing - remove entry
+					delete(c.entries, pid)
+					c.dirty = true
+					logging.Info("PIDCache.ValidateOnLoad: PID %d removed (no session found on rescan)", pid)
+				} else {
+					logging.Debug("PIDCache.ValidateOnLoad: PID %d unchanged after rescan", pid)
+				}
+			}
+		}
+	}
+
+	logging.Info("PIDCache.ValidateOnLoad: Rescanned %d PIDs, updated %d entries", rescannedCount, updatedCount)
+}
+
+// getBirthTime returns the birth (creation) time of a file.
+// It first tries the statx syscall with STATX_BTIME, which is the most accurate.
+// If that fails (e.g., filesystem doesn't support birth time), it falls back to
+// parsing the timestamp from the first line of the JSONL file.
+// If that also fails, it falls back to the file's mtime.
+func getBirthTime(path string) (time.Time, error) {
+	// Try statx with STATX_BTIME first
+	var stat unix.Statx_t
+	err := unix.Statx(unix.AT_FDCWD, path, 0, unix.STATX_BTIME, &stat)
+	if err == nil && (stat.Mask&unix.STATX_BTIME) != 0 {
+		birthTime := time.Unix(stat.Btime.Sec, int64(stat.Btime.Nsec))
+		logging.Debug("getBirthTime: %s - statx birth time: %v", path, birthTime)
+		return birthTime, nil
+	}
+
+	logging.Debug("getBirthTime: %s - statx BTIME not available, trying JSONL fallback", path)
+
+	// Fall back to JSONL first-line timestamp
+	jsonlTime, err := parseJSONLFirstLineTimestamp(path)
+	if err == nil {
+		logging.Debug("getBirthTime: %s - JSONL timestamp: %v", path, jsonlTime)
+		return jsonlTime, nil
+	}
+
+	logging.Debug("getBirthTime: %s - JSONL fallback failed (%v), using mtime", path, err)
+
+	// Final fallback: use mtime
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("cannot stat file: %w", err)
+	}
+	return info.ModTime(), nil
+}
+
+// parseJSONLFirstLineTimestamp reads the first line of a JSONL file and extracts
+// the timestamp field. This is used as a fallback when statx birth time is unavailable.
+//
+// Expected format: {"timestamp": "2025-12-29T22:35:51.370Z", "type": "...", ...}
+func parseJSONLFirstLineTimestamp(path string) (time.Time, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return time.Time{}, fmt.Errorf("failed to read first line: %w", err)
+		}
+		return time.Time{}, fmt.Errorf("file is empty")
+	}
+
+	line := scanner.Text()
+
+	// Parse the JSON to extract timestamp
+	var entry struct {
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if entry.Timestamp == "" {
+		return time.Time{}, fmt.Errorf("no timestamp field in first line")
+	}
+
+	// Parse ISO8601 timestamp
+	t, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+	if err != nil {
+		// Try without nanoseconds
+		t, err = time.Parse(time.RFC3339, entry.Timestamp)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse timestamp %q: %w", entry.Timestamp, err)
+		}
+	}
+
+	return t, nil
+}
+
+// listSessionFilesInDir returns all UUID-patterned .jsonl files in a directory,
+// excluding agent-*.jsonl files.
+func listSessionFilesInDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+
+		// Extract session ID (filename without .jsonl)
+		sessionID := strings.TrimSuffix(name, ".jsonl")
+
+		// Skip non-UUID session files (like agent-*.jsonl)
+		if !IsUUIDSessionFile(sessionID) {
+			continue
+		}
+
+		files = append(files, filepath.Join(dir, name))
+	}
+
+	return files, nil
 }

@@ -78,6 +78,10 @@ type Matcher struct {
 	// forceFullScan when true bypasses the cache and rescans all PIDs.
 	// This is set by SetForceFullScan() and cleared after each Refresh().
 	forceFullScan bool
+
+	// cacheValidated tracks whether ValidateCacheOnLoad() has been called.
+	// This ensures validation only happens once, on the first scan after startup.
+	cacheValidated bool
 }
 
 // NewMatcher creates a new Matcher with default runners.
@@ -143,12 +147,60 @@ func (m *Matcher) SetMemoryScanner(scanner MemoryScannerInterface) {
 
 // SetSessionFilePaths sets the session file paths used for memory scanning.
 // This should be called before Refresh() with paths from the session scanner.
+// After setting paths, call ValidateCacheOnLoad() to check for stale cache entries.
 func (m *Matcher) SetSessionFilePaths(paths []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessionFilePaths = make([]string, len(paths))
 	copy(m.sessionFilePaths, paths)
 	logging.Debug("Set %d session file paths for memory scanning", len(paths))
+}
+
+// ValidateCacheOnLoad validates the PID cache for stale entries by checking
+// if newer session files exist in the same directories as cached sessions.
+// This should be called after SetSessionFilePaths() to detect stale mappings
+// caused by /clear while the dashboard was closed.
+func (m *Matcher) ValidateCacheOnLoad() {
+	m.mu.Lock()
+	sessionPaths := make([]string, len(m.sessionFilePaths))
+	copy(sessionPaths, m.sessionFilePaths)
+	pidCache := m.pidCache
+	m.mu.Unlock()
+
+	if pidCache == nil {
+		logging.Debug("Matcher.ValidateCacheOnLoad: No PID cache to validate")
+		return
+	}
+
+	if len(sessionPaths) == 0 {
+		logging.Debug("Matcher.ValidateCacheOnLoad: No session paths set, skipping validation")
+		return
+	}
+
+	logging.Info("Matcher.ValidateCacheOnLoad: Validating cache with %d session paths", len(sessionPaths))
+
+	// Define the rescan callback - memory scans a single PID and returns the session file path
+	rescanFunc := func(pid int) string {
+		result := ScanAllPIDsForSessions([]int{pid}, sessionPaths)
+		if sessionID, ok := result[pid]; ok {
+			// Find the full path for this session ID
+			for _, path := range sessionPaths {
+				if strings.HasSuffix(path, "/"+sessionID+".jsonl") {
+					return path
+				}
+			}
+		}
+		return ""
+	}
+
+	pidCache.ValidateOnLoad(rescanFunc)
+
+	// Save cache if it was modified
+	if pidCache.IsDirty() {
+		if err := pidCache.Save(); err != nil {
+			logging.Warn("Matcher.ValidateCacheOnLoad: Failed to save cache: %v", err)
+		}
+	}
 }
 
 // Refresh updates the matcher's state by querying tmux and process lists.
@@ -323,9 +375,35 @@ func (m *Matcher) logDuplicateMappings() {
 //   - If forceFullScan is true, clears cache and scans all PIDs
 //   - Otherwise, uses cache for known PIDs and only scans uncached PIDs
 //   - Updates cache with new scan results
+//   - On first call, validates cache for stale entries via ValidateCacheOnLoad()
 func (m *Matcher) scanAndMatchSessions(pids []int) {
 	logging.Info("scanAndMatchSessions: Starting for %d PIDs with %d session paths (forceFullScan=%v)",
 		len(pids), len(m.sessionFilePaths), m.forceFullScan)
+
+	// On first scan, validate cache for stale entries caused by /clear while closed
+	if !m.cacheValidated && m.pidCache != nil && len(m.sessionFilePaths) > 0 {
+		m.cacheValidated = true
+		logging.Info("scanAndMatchSessions: First scan, validating cache for stale entries")
+
+		// Make a copy of session paths for the callback (avoid holding lock during rescan)
+		sessionPaths := make([]string, len(m.sessionFilePaths))
+		copy(sessionPaths, m.sessionFilePaths)
+
+		// Define the rescan callback
+		rescanFunc := func(pid int) string {
+			result := ScanAllPIDsForSessions([]int{pid}, sessionPaths)
+			if sessionID, ok := result[pid]; ok {
+				for _, path := range sessionPaths {
+					if strings.HasSuffix(path, "/"+sessionID+".jsonl") {
+						return path
+					}
+				}
+			}
+			return ""
+		}
+
+		m.pidCache.ValidateOnLoad(rescanFunc)
+	}
 
 	// Handle force full scan (cache buster from 'r' key)
 	if m.forceFullScan && m.pidCache != nil {

@@ -524,6 +524,7 @@ namespace tmux {
         - pidCache *PIDCache
         - sessionWatcher *SessionWatcher
         - forceFullScan bool
+        - cacheValidated bool
 
         - findAndMatchClaudeProcesses() 
         - logDuplicateMappings() 
@@ -534,6 +535,7 @@ namespace tmux {
 
         + SetMemoryScanner(scanner MemoryScannerInterface) 
         + SetSessionFilePaths(paths []string) 
+        + ValidateCacheOnLoad() 
         + Refresh() error
         + FindClaudeProcesses() []ClaudeProcess
         + MatchSessionToPane(sess *session.Session) *Pane
@@ -609,6 +611,7 @@ namespace tmux {
         + IsDirty() bool
         + MarkClean() 
         + GetAllSessionDirs() []string
+        + ValidateOnLoad(rescanFunc <font color=blue>func</font>(int) string) 
 
     }
     class "PIDCacheEntry" << (S,Aquamarine) >> {

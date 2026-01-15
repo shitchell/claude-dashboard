@@ -550,6 +550,7 @@ classDiagram
   - Uses memory scanning as sole source for session-to-PID mapping
   - Session-to-pane derived on-the-fly: sessionID -> PID -> TTY -> pane
   - Uses `refreshing` flag to prevent concurrent refresh cycles (memory scanning is slow)
+  - Uses `cacheValidated` flag to ensure stale cache validation runs only once at startup
   - **PID Caching**: Uses PIDCache to avoid redundant memory scans for known PIDs
   - **fsnotify Integration**: Uses SessionWatcher to detect new session files (e.g., after /clear)
   - **Refresh()**: Updates all mappings (panes, processes, memory scan)
@@ -557,6 +558,7 @@ classDiagram
   - **HasRunningProcess()**: Checks if session is owned by a PID
   - **FindClaudeProcesses()**: Identifies Claude processes
   - **SetSessionFilePaths()**: Configures paths for memory scanning
+  - **ValidateCacheOnLoad()**: Validates cache for stale entries on first scan (detects /clear while closed)
   - **SetForceFullScan()**: Bypasses cache on next refresh (triggered by 'r' key)
   - **Close()**: Releases resources (saves cache, stops watcher)
 - **ClaudeProcess**: A process running Claude with extracted SessionID
@@ -573,6 +575,11 @@ classDiagram
   - **ValidatePIDs()**: Removes entries for dead processes
   - **GetUncachedPIDs()**: Returns PIDs not in cache for scanning
   - **Clear()**: Clears all entries (cache buster)
+  - **ValidateOnLoad()**: Detects stale entries by comparing session mtimes against birth times of untracked files; rescans suspicious PIDs via callback
+- **Helper functions**:
+  - **getBirthTime()**: Gets file birth time via statx syscall, falls back to JSONL timestamp or mtime
+  - **parseJSONLFirstLineTimestamp()**: Extracts timestamp from JSONL first line
+  - **listSessionFilesInDir()**: Lists UUID-patterned .jsonl files, excludes agent-*
 
 #### `session_watcher.go` - fsnotify Session File Watcher
 - **SessionWatcher**: Monitors session directories for new .jsonl files
