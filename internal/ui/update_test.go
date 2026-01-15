@@ -580,3 +580,267 @@ func TestHelpModeKeys(t *testing.T) {
 		}
 	})
 }
+
+// TestStatusUpdateDoesNotCauseRefiltering verifies that status updates
+// change session status indicators but do NOT re-filter the visible session list.
+// This is a SUCCESS test - it tests the expected behavior AFTER the fix.
+func TestStatusUpdateDoesNotCauseRefiltering(t *testing.T) {
+	t.Run("status update preserves filtered session count", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+
+		// Create sessions with StatusActive (not exited)
+		sessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusActive},
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusActive},
+			{ID: "sess-3", ProjectName: "project-c", Status: session.StatusIdle},
+		}
+
+		// Enable ExcludeExited filter
+		m.filterConfig.ExcludeExited = true
+
+		// Set sessions and apply filters - all 3 should be visible
+		m.sessions = sessions
+		m.applyFiltersAndSort()
+
+		if len(m.filteredSessions) != 3 {
+			t.Fatalf("precondition failed: expected 3 filtered sessions, got %d", len(m.filteredSessions))
+		}
+
+		countBefore := len(m.filteredSessions)
+
+		// Create status update message - sessions remain Active/Idle
+		updatedSessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusIdle}, // Active -> Idle
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusActive},
+			{ID: "sess-3", ProjectName: "project-c", Status: session.StatusIdle},
+		}
+		msg := statusUpdatedMsg{Sessions: updatedSessions, Error: nil}
+
+		// Apply status update
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		countAfter := len(updatedModel.filteredSessions)
+
+		// Status update should NOT change the count of visible sessions
+		if countAfter != countBefore {
+			t.Errorf("status update changed filtered session count: before=%d, after=%d",
+				countBefore, countAfter)
+		}
+
+		// Verify status indicators DID change
+		var foundSess1 *session.Session
+		for _, s := range updatedModel.filteredSessions {
+			if s.ID == "sess-1" {
+				foundSess1 = s
+				break
+			}
+		}
+		if foundSess1 == nil {
+			t.Fatal("sess-1 not found in filtered sessions")
+		}
+		if foundSess1.Status != session.StatusIdle {
+			t.Errorf("expected sess-1 status to change to Idle, got %v", foundSess1.Status)
+		}
+	})
+
+	t.Run("status update does not filter out sessions that become idle", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+
+		// All sessions start as Active
+		sessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusActive},
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusActive},
+		}
+
+		m.filterConfig.ExcludeExited = true
+		m.sessions = sessions
+		m.applyFiltersAndSort()
+
+		// Both sessions should be visible
+		if len(m.filteredSessions) != 2 {
+			t.Fatalf("precondition failed: expected 2 filtered sessions, got %d", len(m.filteredSessions))
+		}
+
+		// Status update changes both to Idle (still not Exited)
+		updatedSessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusIdle},
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusIdle},
+		}
+		msg := statusUpdatedMsg{Sessions: updatedSessions, Error: nil}
+
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		// Both sessions should still be visible (Idle != Exited)
+		if len(updatedModel.filteredSessions) != 2 {
+			t.Errorf("expected 2 sessions to remain visible after status update, got %d",
+				len(updatedModel.filteredSessions))
+		}
+	})
+}
+
+// TestBug015_FlickerOnRefreshWithExcludeExitedFilter explicitly detects the
+// BUG-015 flicker issue: sessions temporarily disappear during refresh when
+// ExcludeExited filter is active because new sessions have default StatusExited.
+//
+// This is a BUG DETECTION test - it should FAIL if the bug is present.
+func TestBug015_FlickerOnRefreshWithExcludeExitedFilter(t *testing.T) {
+	t.Run("sessions do not disappear during refresh with ExcludeExited filter", func(t *testing.T) {
+		m := NewModel(ModelConfig{})
+		m.ready = true
+
+		// Start with sessions that have Active status (not exited)
+		initialSessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusActive},
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusIdle},
+			{ID: "sess-3", ProjectName: "project-c", Status: session.StatusActive},
+		}
+
+		// Enable ExcludeExited filter - this is the critical precondition
+		m.filterConfig.ExcludeExited = true
+
+		// Set up initial state
+		m.sessions = initialSessions
+		m.applyFiltersAndSort()
+
+		countBefore := len(m.filteredSessions)
+		if countBefore != 3 {
+			t.Fatalf("precondition failed: expected 3 visible sessions, got %d", countBefore)
+		}
+
+		// Simulate sessionsRefreshedMsg with NEW session objects
+		// These have DEFAULT StatusExited (the bug trigger!)
+		// In real usage, the Service.Refresh() creates new Session objects
+		// that have Status=StatusExited (zero value) before status determination
+		refreshedSessions := []*session.Session{
+			{ID: "sess-1", ProjectName: "project-a", Status: session.StatusExited}, // Default!
+			{ID: "sess-2", ProjectName: "project-b", Status: session.StatusExited}, // Default!
+			{ID: "sess-3", ProjectName: "project-c", Status: session.StatusExited}, // Default!
+		}
+		msg := sessionsRefreshedMsg{Sessions: refreshedSessions, Error: nil}
+
+		// Apply the refresh message
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		countAfter := len(updatedModel.filteredSessions)
+
+		// THE BUG: If ExcludeExited filter sees the default StatusExited,
+		// it will filter out ALL sessions, causing the count to drop to 0
+		if countAfter < countBefore {
+			t.Errorf("BUG-015: Session count dropped during refresh! "+
+				"Expected %d sessions, got %d. "+
+				"Sessions temporarily filtered out due to default StatusExited before status determination. "+
+				"This causes UI flicker where the first row disappears momentarily.",
+				countBefore, countAfter)
+		}
+	})
+
+	t.Run("single session does not disappear during refresh", func(t *testing.T) {
+		// This tests the exact scenario from the bug report:
+		// "first row temporarily disappears (~100-200ms)"
+		m := NewModel(ModelConfig{})
+		m.ready = true
+
+		// Single session with Active status
+		initialSessions := []*session.Session{
+			{ID: "active-session", ProjectName: "my-project", Status: session.StatusActive},
+		}
+
+		m.filterConfig.ExcludeExited = true
+		m.sessions = initialSessions
+		m.applyFiltersAndSort()
+
+		if len(m.filteredSessions) != 1 {
+			t.Fatalf("precondition failed: expected 1 visible session, got %d", len(m.filteredSessions))
+		}
+
+		// Refresh returns session with default StatusExited
+		refreshedSessions := []*session.Session{
+			{ID: "active-session", ProjectName: "my-project", Status: session.StatusExited},
+		}
+		msg := sessionsRefreshedMsg{Sessions: refreshedSessions, Error: nil}
+
+		newModel, _ := m.Update(msg)
+		updatedModel := newModel.(Model)
+
+		// The session should NOT disappear during refresh
+		if len(updatedModel.filteredSessions) != 1 {
+			t.Errorf("BUG-015: Session disappeared during refresh! "+
+				"Expected 1 session, got %d. "+
+				"The ExcludeExited filter removed the session because it had default StatusExited. "+
+				"This causes the 'first row temporarily disappears' flicker bug.",
+				len(updatedModel.filteredSessions))
+		}
+	})
+
+	t.Run("session count transitions match bug report pattern", func(t *testing.T) {
+		// Tests the exact pattern from bug report: "11 -> 10 -> 11"
+		// (though we use smaller numbers for test simplicity)
+		m := NewModel(ModelConfig{})
+		m.ready = true
+
+		// Create 3 sessions with various active statuses
+		initialSessions := []*session.Session{
+			{ID: "s1", ProjectName: "p1", Status: session.StatusActive},
+			{ID: "s2", ProjectName: "p2", Status: session.StatusIdle},
+			{ID: "s3", ProjectName: "p3", Status: session.StatusActive},
+		}
+
+		m.filterConfig.ExcludeExited = true
+		m.sessions = initialSessions
+		m.applyFiltersAndSort()
+
+		countInitial := len(m.filteredSessions)
+		if countInitial != 3 {
+			t.Fatalf("precondition: expected 3 sessions, got %d", countInitial)
+		}
+
+		// STEP 1: Refresh arrives with default StatusExited for all
+		refreshedSessions := []*session.Session{
+			{ID: "s1", ProjectName: "p1", Status: session.StatusExited},
+			{ID: "s2", ProjectName: "p2", Status: session.StatusExited},
+			{ID: "s3", ProjectName: "p3", Status: session.StatusExited},
+		}
+		refreshMsg := sessionsRefreshedMsg{Sessions: refreshedSessions, Error: nil}
+
+		newModel, _ := m.Update(refreshMsg)
+		m2 := newModel.(Model)
+		countAfterRefresh := len(m2.filteredSessions)
+
+		// STEP 2: Status update arrives with correct statuses
+		statusUpdatedSessions := []*session.Session{
+			{ID: "s1", ProjectName: "p1", Status: session.StatusActive},
+			{ID: "s2", ProjectName: "p2", Status: session.StatusIdle},
+			{ID: "s3", ProjectName: "p3", Status: session.StatusActive},
+		}
+		statusMsg := statusUpdatedMsg{Sessions: statusUpdatedSessions, Error: nil}
+
+		newModel2, _ := m2.Update(statusMsg)
+		m3 := newModel2.(Model)
+		countAfterStatus := len(m3.filteredSessions)
+
+		// Detect the flicker pattern
+		if countAfterRefresh < countInitial && countAfterStatus == countInitial {
+			// This is exactly the "3 -> 0 -> 3" pattern (analogous to "11 -> 10 -> 11")
+			t.Errorf("BUG-015: Detected flicker pattern! "+
+				"Count went %d -> %d -> %d. "+
+				"Sessions temporarily disappeared after refresh (count dropped to %d) "+
+				"then reappeared after status update (count restored to %d). "+
+				"This is the root cause of the UI flicker bug.",
+				countInitial, countAfterRefresh, countAfterStatus,
+				countAfterRefresh, countAfterStatus)
+		}
+
+		// Even if the above didn't catch it, verify no intermediate drop
+		if countAfterRefresh != countInitial {
+			t.Errorf("BUG-015: Session count changed during refresh! "+
+				"Initial: %d, After refresh: %d. "+
+				"Sessions should remain visible during refresh cycle.",
+				countInitial, countAfterRefresh)
+		}
+	})
+}
