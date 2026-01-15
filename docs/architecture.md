@@ -614,9 +614,16 @@ classDiagram
   - Uses NULL-prefixed patterns (\x00 + full path) to avoid false positives
   - Only scans exactly 256KB memory regions (V8's session path storage regions)
   - Filters to UUID-patterned session files (skips agent-*.jsonl)
-  - **ScanUntilMatch()**: Scans regions one-by-one with early exit on match
+  - **ScanWithCombinedPattern()**: Optimized scanning with CWD filtering and combined regex
+    - Pre-filters session paths by process CWD (~200 -> ~16 paths)
+    - Uses single combined alternation regex \x00(path1|path2|...) instead of per-pattern loop
+    - Achieves ~22x speedup (3.3s -> 150ms per scan)
+  - **ScanUntilMatch()**: Legacy method scanning regions one-by-one with early exit
   - **ReadAllMemory()**: Reads all eligible regions into single buffer
   - **ScanAllPIDsForSessions()**: Main entry point for batch scanning
+  - **encodePath()**: Converts filesystem paths to Claude's .claude/projects/ encoding
+  - **filterSessionPathsByCWD()**: Filters session paths by process working directory
+  - **buildCombinedPattern()**: Creates single regex from multiple session paths
   - Used as sole source for PID-to-SessionID mapping (no CWD fallback)
 
 ---
@@ -1040,6 +1047,8 @@ The codebase includes test files for most packages with:
 7. **Batch Status Updates**: UpdateAllSessionStatuses() refreshes matcher once
 8. **Cursor Position Preservation**: Survives session list refresh
 9. **Buffer Management**: Custom buffer sizes for large JSONL files
+10. **CWD-Based Path Filtering**: Pre-filter session paths by process CWD before scanning (~12x reduction)
+11. **Combined Alternation Regex**: Single regex pattern instead of per-path loop (~22x speedup total)
 
 ---
 

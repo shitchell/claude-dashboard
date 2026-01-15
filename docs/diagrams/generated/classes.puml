@@ -565,6 +565,7 @@ namespace tmux {
         + ScanForPatterns(patterns [][]byte) <font color=blue>map</font>[string]int
         + ReadAllMemory() ([]byte, error)
         + ScanUntilMatch(patterns <font color=blue>map</font>[string][]byte) (string, bool)
+        + ScanWithCombinedPattern(sessionPaths []string) (string, bool)
 
     }
     interface "MemoryScannerInterface"  {
@@ -1194,6 +1195,10 @@ namespace memtest {
 
     }
     class "region" << (S,Aquamarine) >> {
+        - start uint64
+        - end uint64
+        - start uint64
+        - end uint64
         - start uint64
         - end uint64
         - start uint64
