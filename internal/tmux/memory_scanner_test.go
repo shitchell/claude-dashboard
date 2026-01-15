@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -1372,5 +1373,638 @@ func TestCausality_ParallelLogging(t *testing.T) {
 	// The parallel implementation logs the worker count
 	if !strings.Contains(source, "using %d workers") {
 		t.Error("Parallel worker count logging not found - implementation may have been reverted")
+	}
+}
+
+// =============================================================================
+// Tests for Chunk 001: CWD Filter + Combined Alternation Optimization
+// =============================================================================
+//
+// These tests verify the optimizations introduced in ticket 012 chunk 001:
+// 1. encodePath() - Path encoding to match Claude's .claude/projects/ format
+// 2. isASCIIAlphanumOrDash() - Character classification helper
+// 3. filterSessionPathsByCWD() - CWD-based pre-filtering
+// 4. buildCombinedPattern() - Combined alternation regex construction
+// 5. ScanWithCombinedPattern() - Full optimized scanning flow
+//
+// The tests are designed to FAIL if the implementation is reverted.
+
+// TestEncodePath tests the encodePath() function with various inputs.
+// This is a table-driven test covering ASCII, Unicode, and edge cases.
+func TestEncodePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// Basic ASCII paths
+		{"empty_string", "", ""},
+		{"basic_path", "/home/guy", "-home-guy"},
+		{"short_path", "/tmp", "-tmp"},
+		{"multiple_slashes", "/home/guy/code/git", "-home-guy-code-git"},
+
+		// Preserved characters: [a-zA-Z0-9-]
+		{"lowercase", "abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz"},
+		{"uppercase", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+		{"digits", "0123456789", "0123456789"},
+		{"dash_preserved", "abc-123-XYZ", "abc-123-XYZ"},
+		{"mixed_alphanum_dash", "abcDEF123-", "abcDEF123-"},
+
+		// Non-preserved 1-byte ASCII -> 1 dash each
+		{"dot_becomes_dash", "file.txt", "file-txt"},
+		{"dot_in_path", "/home/guy/.claude-life", "-home-guy--claude-life"},
+		{"space_becomes_dash", "path with spaces", "path-with-spaces"},
+		{"underscore_becomes_dash", "file_name", "file-name"},
+		{"slash_becomes_dash", "/", "-"},
+		{"multiple_dots", "...", "---"},
+		{"special_ascii", "!@#$%", "-----"},
+
+		// Real paths from valid_paths.txt
+		{"real_path_home", "/home/guy", "-home-guy"},
+		{"real_path_claude_life", "/home/guy/.claude-life", "-home-guy--claude-life"},
+		{"real_path_desktop", "/home/guy/Desktop", "-home-guy-Desktop"},
+		{"real_path_project", "/home/guy/code/git/github.com/shitchell/claude-dashboard",
+			"-home-guy-code-git-github-com-shitchell-claude-dashboard"},
+
+		// 2-byte UTF-8 characters (U+0080 - U+07FF) -> 1 dash each
+		// The acute accent é (U+00E9) is 2 bytes in UTF-8
+		{"2byte_e_acute", "café", "caf-"},
+		{"2byte_multiple", "éïüñ", "----"},
+
+		// 3-byte UTF-8 characters (U+0800 - U+FFFF) -> 1 dash each
+		// CJK characters like 中 (U+4E2D) are 3 bytes
+		{"3byte_cjk", "中日ア", "---"},
+
+		// 4-byte UTF-8 characters (U+10000+) -> 2 dashes each
+		// Emoji like 🎉 (U+1F389) are 4 bytes -> floor(4/2) = 2 dashes
+		{"4byte_single_emoji", "🎉", "--"},
+		{"4byte_multiple_emoji", "🎉🎊🎁", "------"},
+		{"4byte_mixed", "test-🎉", "test---"},
+
+		// Boundary cases from test-plan.md
+		{"boundary_smp_first", "𐀀", "--"},  // U+10000 (first SMP character) = 4 bytes -> 2 dashes
+
+		// Complex mixed paths
+		{"mixed_case_underscore", "MiXeD-CaSe_123", "MiXeD-CaSe-123"},
+		{"triple_dash", "---triple-dash---", "---triple-dash---"},  // dashes preserved
+
+		// Edge case: path with newline and tab
+		{"tab_and_space", "tab\there sp ace", "tab-here-sp-ace"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := encodePath(tt.input)
+			if got != tt.expected {
+				t.Errorf("encodePath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEncodePath_ByteCountingLogic verifies the max(1, floor(bytes/2)) formula.
+// This tests the core algorithm: non-preserved chars produce dashes based on byte length.
+func TestEncodePath_ByteCountingLogic(t *testing.T) {
+	tests := []struct {
+		name          string
+		char          rune
+		expectedBytes int
+		expectedDashes int
+	}{
+		// 1-byte chars: max(1, floor(1/2)) = max(1, 0) = 1 dash
+		{"1byte_space", ' ', 1, 1},
+		{"1byte_slash", '/', 1, 1},
+		{"1byte_dot", '.', 1, 1},
+		{"1byte_exclamation", '!', 1, 1},
+		{"1byte_null", '\x00', 1, 1},
+
+		// 2-byte chars: max(1, floor(2/2)) = max(1, 1) = 1 dash
+		{"2byte_e_acute", 'é', 2, 1},     // U+00E9
+		{"2byte_copyright", '©', 2, 1},   // U+00A9
+		{"2byte_pound", '£', 2, 1},       // U+00A3
+
+		// 3-byte chars: max(1, floor(3/2)) = max(1, 1) = 1 dash
+		{"3byte_cjk_zhong", '中', 3, 1},   // U+4E2D
+		{"3byte_euro", '€', 3, 1},         // U+20AC
+		{"3byte_katakana", 'ア', 3, 1},    // U+30A2
+
+		// 4-byte chars: max(1, floor(4/2)) = max(1, 2) = 2 dashes
+		{"4byte_emoji_party", '🎉', 4, 2}, // U+1F389
+		{"4byte_emoji_gift", '🎁', 4, 2},  // U+1F381
+		{"4byte_smp_first", '𐀀', 4, 2},   // U+10000 (first SMP character)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := string(tt.char)
+			got := encodePath(input)
+
+			// Verify byte length assumption
+			actualBytes := len(input)
+			if actualBytes != tt.expectedBytes {
+				t.Errorf("Expected %d bytes for %q (U+%04X), got %d",
+					tt.expectedBytes, input, tt.char, actualBytes)
+			}
+
+			// Verify dash count
+			expectedOutput := strings.Repeat("-", tt.expectedDashes)
+			if got != expectedOutput {
+				t.Errorf("encodePath(%q) = %q (len=%d), want %q (len=%d)",
+					input, got, len(got), expectedOutput, len(expectedOutput))
+			}
+		})
+	}
+}
+
+// TestIsASCIIAlphanumOrDash tests the character classification helper.
+func TestIsASCIIAlphanumOrDash(t *testing.T) {
+	tests := []struct {
+		char rune
+		want bool
+	}{
+		// Lowercase letters - should be preserved
+		{'a', true},
+		{'m', true},
+		{'z', true},
+
+		// Uppercase letters - should be preserved
+		{'A', true},
+		{'M', true},
+		{'Z', true},
+
+		// Digits - should be preserved
+		{'0', true},
+		{'5', true},
+		{'9', true},
+
+		// Dash - should be preserved
+		{'-', true},
+
+		// Common non-preserved ASCII characters
+		{'_', false},  // Underscore NOT preserved
+		{'.', false},
+		{'/', false},
+		{' ', false},
+		{'!', false},
+		{'@', false},
+		{'#', false},
+		{'$', false},
+		{'%', false},
+		{'^', false},
+		{'&', false},
+		{'*', false},
+		{'(', false},
+		{')', false},
+		{'+', false},
+		{'=', false},
+		{'[', false},
+		{']', false},
+		{'{', false},
+		{'}', false},
+		{'|', false},
+		{'\\', false},
+		{':', false},
+		{';', false},
+		{'"', false},
+		{'\'', false},
+		{'<', false},
+		{'>', false},
+		{',', false},
+		{'?', false},
+		{'`', false},
+		{'~', false},
+
+		// Control characters
+		{'\n', false},
+		{'\t', false},
+		{'\r', false},
+		{'\x00', false},
+
+		// Non-ASCII characters (should return false)
+		{'é', false},  // 2-byte
+		{'中', false}, // 3-byte
+		{'🎉', false}, // 4-byte
+	}
+
+	for _, tt := range tests {
+		name := fmt.Sprintf("char_%d", tt.char)
+		if tt.char >= 32 && tt.char < 127 {
+			name = fmt.Sprintf("char_%c", tt.char)
+		}
+		t.Run(name, func(t *testing.T) {
+			got := isASCIIAlphanumOrDash(tt.char)
+			if got != tt.want {
+				t.Errorf("isASCIIAlphanumOrDash(%q U+%04X) = %v, want %v",
+					string(tt.char), tt.char, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildCombinedPattern tests regex pattern construction.
+func TestBuildCombinedPattern(t *testing.T) {
+	tests := []struct {
+		name        string
+		paths       []string
+		shouldMatch []string
+		noMatch     []string
+	}{
+		{
+			name:        "single_path",
+			paths:       []string{"/home/guy/.claude/projects/-home-guy/abc123.jsonl"},
+			shouldMatch: []string{"\x00/home/guy/.claude/projects/-home-guy/abc123.jsonl"},
+			noMatch: []string{
+				"/home/guy/.claude/projects/-home-guy/abc123.jsonl", // No NULL prefix
+				"\x00/home/guy/.claude/projects/-home-guy/other.jsonl",
+			},
+		},
+		{
+			name: "multiple_paths",
+			paths: []string{
+				"/path/a.jsonl",
+				"/path/b.jsonl",
+				"/path/c.jsonl",
+			},
+			shouldMatch: []string{
+				"\x00/path/a.jsonl",
+				"\x00/path/b.jsonl",
+				"\x00/path/c.jsonl",
+			},
+			noMatch: []string{
+				"/path/a.jsonl",       // No NULL prefix
+				"\x00/path/d.jsonl",   // Different path
+				"\x00/other/a.jsonl",  // Different directory
+			},
+		},
+		{
+			name:  "path_with_special_regex_chars",
+			paths: []string{"/home/guy/.claude/projects/-home-guy/abc.jsonl"},
+			shouldMatch: []string{
+				"\x00/home/guy/.claude/projects/-home-guy/abc.jsonl",
+			},
+			noMatch: []string{
+				"\x00/home/guy/Xclaudeprojects/-home-guy/abcXjsonl", // Without QuoteMeta, . would match anything
+			},
+		},
+		{
+			name:        "uuid_session_path",
+			paths:       []string{"/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl"},
+			shouldMatch: []string{"\x00/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl"},
+			noMatch:     []string{"\x00/home/user/.claude/projects/-home-user/other-uuid.jsonl"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pattern, err := buildCombinedPattern(tt.paths)
+			if err != nil {
+				t.Fatalf("buildCombinedPattern() error = %v", err)
+			}
+
+			if len(tt.paths) == 0 {
+				if pattern != nil {
+					t.Error("expected nil pattern for empty paths")
+				}
+				return
+			}
+
+			if pattern == nil {
+				t.Fatal("expected non-nil pattern for non-empty paths")
+			}
+
+			// Test matches
+			for _, m := range tt.shouldMatch {
+				if !pattern.Match([]byte(m)) {
+					t.Errorf("pattern should match %q", m)
+				}
+			}
+
+			// Test non-matches
+			for _, m := range tt.noMatch {
+				if pattern.Match([]byte(m)) {
+					t.Errorf("pattern should NOT match %q", m)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildCombinedPattern_EmptyPaths verifies nil is returned for empty input.
+func TestBuildCombinedPattern_EmptyPaths(t *testing.T) {
+	pattern, err := buildCombinedPattern([]string{})
+	if err != nil {
+		t.Errorf("buildCombinedPattern([]) error = %v", err)
+	}
+	if pattern != nil {
+		t.Error("buildCombinedPattern([]) should return nil pattern")
+	}
+
+	pattern, err = buildCombinedPattern(nil)
+	if err != nil {
+		t.Errorf("buildCombinedPattern(nil) error = %v", err)
+	}
+	if pattern != nil {
+		t.Error("buildCombinedPattern(nil) should return nil pattern")
+	}
+}
+
+// TestBuildCombinedPattern_FindsSubmatch verifies the submatch capture group works.
+func TestBuildCombinedPattern_FindsSubmatch(t *testing.T) {
+	paths := []string{
+		"/home/guy/.claude/projects/-home-guy/abc123.jsonl",
+		"/home/guy/.claude/projects/-home-guy/def456.jsonl",
+	}
+
+	pattern, err := buildCombinedPattern(paths)
+	if err != nil {
+		t.Fatalf("buildCombinedPattern() error = %v", err)
+	}
+
+	// Test that FindSubmatch extracts the correct path
+	testData := []byte("some data\x00/home/guy/.claude/projects/-home-guy/abc123.jsonlmore data")
+	match := pattern.FindSubmatch(testData)
+
+	if len(match) < 2 {
+		t.Fatalf("FindSubmatch should return at least 2 groups, got %d", len(match))
+	}
+
+	matchedPath := string(match[1])
+	expected := "/home/guy/.claude/projects/-home-guy/abc123.jsonl"
+	if matchedPath != expected {
+		t.Errorf("FindSubmatch captured %q, want %q", matchedPath, expected)
+	}
+}
+
+// TestExtractSessionIDFromPath_CombinedPattern tests session ID extraction for combined pattern usage.
+// Note: There's also a TestExtractSessionIDFromPath in pid_cache_test.go - this test covers
+// additional edge cases specific to the combined pattern implementation.
+func TestExtractSessionIDFromPath_CombinedPattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		// UUID paths - used by ScanWithCombinedPattern
+		{"uuid_standard", "/home/guy/.claude/projects/-home-guy/abc123de-f456-7890-abcd-ef0123456789.jsonl",
+			"abc123de-f456-7890-abcd-ef0123456789"},
+		{"uuid_real", "/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl",
+			"cd49619d-7192-4a31-8b66-37fa4751c8be"},
+
+		// Simple filename - verifies base extraction works
+		{"simple_filename", "/path/to/session.jsonl", "session"},
+		{"bare_jsonl", "simple.jsonl", "simple"},
+
+		// No extension - verifies fallback behavior
+		{"no_extension", "/no/extension/file", "file"},
+
+		// Just filename with .jsonl
+		{"just_filename", "abc123.jsonl", "abc123"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractSessionIDFromPath(tt.path)
+			if got != tt.expected {
+				t.Errorf("extractSessionIDFromPath(%q) = %q, want %q",
+					tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestScanWithCombinedPattern_NoSessionPaths verifies handling of empty paths.
+func TestScanWithCombinedPattern_NoSessionPaths(t *testing.T) {
+	scanner := NewMemoryScanner(os.Getpid())
+	sessionID, found := scanner.ScanWithCombinedPattern(nil)
+
+	if found {
+		t.Error("expected found=false for nil paths")
+	}
+	if sessionID != "" {
+		t.Errorf("expected empty sessionID, got %q", sessionID)
+	}
+}
+
+// TestScanWithCombinedPattern_EmptySessionPaths verifies handling of empty slice.
+func TestScanWithCombinedPattern_EmptySessionPaths(t *testing.T) {
+	scanner := NewMemoryScanner(os.Getpid())
+	sessionID, found := scanner.ScanWithCombinedPattern([]string{})
+
+	if found {
+		t.Error("expected found=false for empty paths")
+	}
+	if sessionID != "" {
+		t.Errorf("expected empty sessionID, got %q", sessionID)
+	}
+}
+
+// TestScanWithCombinedPattern_NonUUIDPathsOnly verifies that non-UUID paths are filtered.
+func TestScanWithCombinedPattern_NonUUIDPathsOnly(t *testing.T) {
+	// Test with only agent-style paths (non-UUID)
+	agentPaths := []string{
+		"/home/user/.claude/projects/-home-user/agent-abc123.jsonl",
+		"/home/user/.claude/projects/-home-user/agent-def456.jsonl",
+	}
+
+	scanner := NewMemoryScanner(os.Getpid())
+	sessionID, found := scanner.ScanWithCombinedPattern(agentPaths)
+
+	// Should return not found because all paths are filtered out
+	if found {
+		t.Error("expected found=false for non-UUID paths only")
+	}
+	if sessionID != "" {
+		t.Errorf("expected empty sessionID, got %q", sessionID)
+	}
+}
+
+// TestScanWithCombinedPattern_NonExistentPID verifies graceful handling for missing process.
+func TestScanWithCombinedPattern_NonExistentPID(t *testing.T) {
+	scanner := NewMemoryScanner(999999999)
+	uuidPaths := []string{
+		"/home/user/.claude/projects/-home-user/cd49619d-7192-4a31-8b66-37fa4751c8be.jsonl",
+	}
+
+	sessionID, found := scanner.ScanWithCombinedPattern(uuidPaths)
+
+	// Should return not found (graceful failure)
+	if found {
+		t.Error("expected found=false for non-existent PID")
+	}
+	if sessionID != "" {
+		t.Errorf("expected empty sessionID, got %q", sessionID)
+	}
+}
+
+// =============================================================================
+// Causality tests for Chunk 001 - WILL FAIL if implementation is reverted
+// =============================================================================
+
+// TestCausality_EncodePathExists verifies encodePath function exists.
+// This test will FAIL if encodePath is removed.
+func TestCausality_EncodePathExists(t *testing.T) {
+	// This will fail to compile if encodePath is removed
+	result := encodePath("/home/guy")
+	if result != "-home-guy" {
+		t.Errorf("encodePath(/home/guy) = %q, want -home-guy", result)
+	}
+}
+
+// TestCausality_IsASCIIAlphanumOrDashExists verifies the helper function exists.
+func TestCausality_IsASCIIAlphanumOrDashExists(t *testing.T) {
+	// This will fail to compile if isASCIIAlphanumOrDash is removed
+	if !isASCIIAlphanumOrDash('a') {
+		t.Error("isASCIIAlphanumOrDash('a') should return true")
+	}
+	if isASCIIAlphanumOrDash('.') {
+		t.Error("isASCIIAlphanumOrDash('.') should return false")
+	}
+}
+
+// TestCausality_BuildCombinedPatternExists verifies buildCombinedPattern exists.
+func TestCausality_BuildCombinedPatternExists(t *testing.T) {
+	paths := []string{"/test/path.jsonl"}
+	pattern, err := buildCombinedPattern(paths)
+	if err != nil {
+		t.Fatalf("buildCombinedPattern() error = %v", err)
+	}
+	if pattern == nil {
+		t.Error("buildCombinedPattern should return non-nil pattern for non-empty paths")
+	}
+}
+
+// TestCausality_ScanWithCombinedPatternExists verifies the method exists on MemoryScanner.
+func TestCausality_ScanWithCombinedPatternExists(t *testing.T) {
+	scanner := NewMemoryScanner(1)
+	// This will fail to compile if ScanWithCombinedPattern is removed
+	sessionID, found := scanner.ScanWithCombinedPattern([]string{})
+
+	// Verify return types
+	var _ string = sessionID
+	var _ bool = found
+}
+
+// TestCausality_SourceCodeHasNewFunctions verifies new functions exist in source code.
+// This test will FAIL if the implementation is reverted.
+func TestCausality_SourceCodeHasNewFunctions(t *testing.T) {
+	sourceFile := "memory_scanner.go"
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read source file %s: %v", sourceFile, err)
+	}
+
+	source := string(content)
+
+	requiredFunctions := []struct {
+		signature   string
+		description string
+	}{
+		{"func encodePath(path string) string", "encodePath function"},
+		{"func isASCIIAlphanumOrDash(r rune) bool", "isASCIIAlphanumOrDash helper"},
+		{"func filterSessionPathsByCWD(paths []string, pid int) []string", "filterSessionPathsByCWD function"},
+		{"func buildCombinedPattern(paths []string)", "buildCombinedPattern function"},
+		{"func (ms *MemoryScanner) ScanWithCombinedPattern", "ScanWithCombinedPattern method"},
+	}
+
+	for _, req := range requiredFunctions {
+		if !strings.Contains(source, req.signature) {
+			t.Errorf("Required function not found: %s (looking for %q)",
+				req.description, req.signature)
+		}
+	}
+}
+
+// TestCausality_MatchPIDUsesNewOptimization verifies MatchPIDToSessionNullPrefix uses ScanWithCombinedPattern.
+func TestCausality_MatchPIDUsesNewOptimization(t *testing.T) {
+	sourceFile := "memory_scanner.go"
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("Failed to read source file %s: %v", sourceFile, err)
+	}
+
+	source := string(content)
+
+	// MatchPIDToSessionNullPrefix should call ScanWithCombinedPattern
+	if !strings.Contains(source, "scanner.ScanWithCombinedPattern") {
+		t.Error("MatchPIDToSessionNullPrefix should call ScanWithCombinedPattern - implementation may have been reverted")
+	}
+}
+
+// TestCausality_EncodePathAlgorithm verifies the encoding algorithm matches expected behavior.
+// This tests several key aspects of the algorithm that could be accidentally changed.
+func TestCausality_EncodePathAlgorithm(t *testing.T) {
+	// Test 1: Verify preserved characters
+	preserved := "abcABC123-"
+	if encodePath(preserved) != preserved {
+		t.Errorf("Alphanumeric chars and dash should be preserved: got %q, want %q",
+			encodePath(preserved), preserved)
+	}
+
+	// Test 2: Verify 1-byte -> 1 dash
+	result := encodePath("/")
+	if result != "-" {
+		t.Errorf("Single slash should become single dash: got %q, want \"-\"", result)
+	}
+
+	// Test 3: Verify 4-byte -> 2 dashes (key algorithm feature)
+	emoji := "🎉" // 4 bytes in UTF-8
+	result = encodePath(emoji)
+	if result != "--" {
+		t.Errorf("4-byte emoji should become 2 dashes: got %q (len=%d), want \"--\" (len=2)",
+			result, len(result))
+	}
+
+	// Test 4: Verify real path encoding matches Claude's format
+	// This is the most important causality test - verifies we match Claude's actual behavior
+	testPath := "/home/guy/.claude-life"
+	expected := "-home-guy--claude-life"
+	result = encodePath(testPath)
+	if result != expected {
+		t.Errorf("encodePath(%q) = %q, want %q (matches Claude's .claude/projects/ format)",
+			testPath, result, expected)
+	}
+}
+
+// TestCausality_CWDFilteringLogic verifies CWD filtering produces expected results.
+// This test documents the filtering behavior.
+func TestCausality_CWDFilteringLogic(t *testing.T) {
+	// The filter logic requires:
+	// 1. Read /proc/<pid>/cwd
+	// 2. Encode the CWD path
+	// 3. Filter paths containing encoded CWD
+
+	// Test encodePath produces correct format for filtering
+	cwd := "/home/guy/code/git/github.com/shitchell/claude-dashboard"
+	encodedCWD := encodePath(cwd)
+	expected := "-home-guy-code-git-github-com-shitchell-claude-dashboard"
+
+	if encodedCWD != expected {
+		t.Errorf("Encoded CWD = %q, want %q", encodedCWD, expected)
+	}
+
+	// Verify the encoded CWD would be found in a matching session path
+	sessionPath := "/home/guy/.claude/projects/-home-guy-code-git-github-com-shitchell-claude-dashboard/session.jsonl"
+	if !strings.Contains(sessionPath, encodedCWD) {
+		t.Error("Session path should contain encoded CWD - filtering logic may be broken")
+	}
+}
+
+// TestCausality_CombinedPatternNULLPrefix verifies patterns include NULL prefix.
+// This is critical for distinguishing true session ownership from chat text.
+func TestCausality_CombinedPatternNULLPrefix(t *testing.T) {
+	paths := []string{"/home/guy/.claude/projects/-home-guy/session.jsonl"}
+	pattern, err := buildCombinedPattern(paths)
+	if err != nil {
+		t.Fatalf("buildCombinedPattern() error = %v", err)
+	}
+
+	// Pattern must match NULL-prefixed path
+	if !pattern.Match([]byte("\x00/home/guy/.claude/projects/-home-guy/session.jsonl")) {
+		t.Error("Pattern should match NULL-prefixed path")
+	}
+
+	// Pattern must NOT match path without NULL prefix
+	if pattern.Match([]byte("/home/guy/.claude/projects/-home-guy/session.jsonl")) {
+		t.Error("Pattern should NOT match path without NULL prefix")
 	}
 }
